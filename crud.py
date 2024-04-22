@@ -1,26 +1,26 @@
 from sqlmodel import Session, select
-from models import History
+from models import Project
 
 
-# History CRUD operations
-class HistoryCRUD:
+# Project CRUD operations
+class ProjectCRUD:
 
     @staticmethod
-    def create_history(session: Session, history: History) -> History:
-        history = History.model_validate(history)
-        session.add(history)
+    def create_project(session: Session, project: Project) -> Project:
+        project = Project.model_validate(project)
+        session.add(project)
         session.commit()
-        session.refresh(history)
-        return history
+        session.refresh(project)
+        return project
 
     @staticmethod
-    def get_histories(session: Session) -> list[History]:
-        statement = select(History)
-        histories = session.exec(statement).all()
-        return histories
+    def get_projects(session: Session) -> list[Project]:
+        statement = select(Project)
+        projects = session.exec(statement).all()
+        return projects
 
     @staticmethod
-    def get_history(session: Session, id: int) -> History | None:
-        statement = select(History).where(History.id == id)
-        history = session.exec(statement).first()
-        return history
+    def get_project(session: Session, id: int) -> Project | None:
+        statement = select(Project).where(Project.id == id)
+        project = session.exec(statement).first()
+        return project
