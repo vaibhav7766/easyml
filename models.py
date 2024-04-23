@@ -2,38 +2,44 @@ from sqlmodel import SQLModel, Field
 
 
 # Shared properties
-class HistoryBase(SQLModel):
+class ProjectBase(SQLModel):
+    __tablename__ = "projects"
+
     id: int
-    project_name: str
+    name: str
     dataset_url: str
+    user_id: int
 
 
 # Database model, database table inferred from class name
-class History(HistoryBase, table=True):
+class Project(ProjectBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    project_name: str
+    name: str
     dataset_url: str
+    user_id: int
 
 
 # Properties to receive on item creation
-# class HistoryCreate(HistoryBase):
+# class ProjectCreate(ProjectBase):
 #     id: int
-#     project_name: str
+#     name: str
 #     dataset_url: str
+#     user_id: int
 
 
 # Properties to receive on item update
-# class HistoryUpdate(HistoryBase):
+# class ProjectUpdate(ProjectBase):
 #     title: str | None = None  # type: ignore
 
 
 # Properties to return via API, id is always required
-# class HistoryPublic(HistoryBase):
+# class ProjectPublic(ProjectBase):
 #     id: int
-#     project_name: str
+#     name: str
 #     dataset_url: str
+#     user_id: int
 
 
 # class HistoriesPublic(SQLModel):
-#     data: list[HistoryBase]
+#     data: list[ProjectBase]
 #     count: int
