@@ -12,11 +12,12 @@ import pickle
 # from sklearn.model_selection import GridSearchCV
 
 class Metrics:
-    def __init__(self, df: pd.DataFrame,x : list | None, y : list, modal_path: str) -> None:
+    def __init__(self, df: pd.DataFrame,x : list | None, y : list, modal_path: str,project_id : int) -> None:
         self.df = df
         self.x = df[x]
         self.y = df[y]
         self.modal_path = modal_path
+        self.project_id = project_id
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.x, self.y, test_size=0.2, random_state=42)
     def metrics_regression(self,y_pred):
         metric = pd.DataFrame()
@@ -53,8 +54,9 @@ class Metrics:
         model.fit(self.X_train, self.y_train)
         y_pred = model.predict(self.X_test)
         metrics = Metrics.metrics_regression(self,y_pred)
-        # save modal
-        
+        # save model
+        with open(self.modal_path + f"liner_regression_model_{self.project_id}.pkl", 'wb') as file:
+            pickle.dump(model, file)       
         return metrics
     
     def logistic_regression(self):
@@ -62,6 +64,8 @@ class Metrics:
         model.fit(self.X_train, self.y_train)
         y_pred = model.predict(self.X_test)
         metrics = Metrics.metrics_classification(self,y_pred)
+        with open(self.modal_path + "logistic_regression_model_{self.project_id}.pkl", 'wb') as file:
+            pickle.dump(model, file)
         return metrics
 
     def decision_tree(self):
@@ -69,6 +73,8 @@ class Metrics:
         model.fit(self.X_train, self.y_train)
         y_pred = model.predict(self.X_test)
         metrics = Metrics.metrics_classification(self,y_pred)
+        with open(self.modal_path + "decision_tree_model_{self.project_id}.pkl", 'wb') as file:
+            pickle.dump(model, file)
         return metrics
     
     def support_vector_machine(self):
@@ -76,6 +82,8 @@ class Metrics:
         model.fit(self.X_train, self.y_train)
         y_pred = model.predict(self.X_test)
         metrics = Metrics.metrics_classification(self,y_pred)
+        with open(self.modal_path + "support_vector_machine_model_{self.project_id}.pkl", 'wb') as file:
+            pickle.dump(model, file)
         return metrics
 
     
@@ -84,6 +92,8 @@ class Metrics:
         model.fit(self.X_train, self.y_train)
         y_pred = model.predict(self.X_test)
         metrics = Metrics.metrics_classification(self,y_pred)
+        with open(self.modal_path + "k_nearest_neighbors_model_{self.project_id}.pkl", 'wb') as file:
+            pickle.dump(model, file)
         return metrics
     
     
@@ -94,6 +104,8 @@ class Metrics:
         model.fit(X_poly, self.y_train)
         y_pred = model.predict(poly.fit_transform(self.X_test))
         metrics = Metrics.metrics_regression(self,y_pred)
+        with open(self.modal_path + "polynomial_regression_model_{self.project_id}.pkl", 'wb') as file:
+            pickle.dump(model, file)
         return metrics
     
     def lasso_regression(self):
@@ -101,6 +113,8 @@ class Metrics:
         model.fit(self.X_train, self.y_train)
         y_pred = model.predict(self.X_test)
         metrics = Metrics.metrics_regression(self,y_pred)
+        with open(self.modal_path + "lasso_regression_model_{self.project_id}.pkl", 'wb') as file:
+            pickle.dump(model, file)
         return metrics
     
     def ridge_regression(self):
@@ -108,6 +122,8 @@ class Metrics:
         model.fit(self.X_train, self.y_train)
         y_pred = model.predict(self.X_test)
         metrics = Metrics.metrics_regression(self,y_pred)
+        with open(self.modal_path + "ridge_regression_model_{self.project_id}.pkl", 'wb') as file:
+            pickle.dump(model, file)
         return metrics
     
     

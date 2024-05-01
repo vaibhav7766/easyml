@@ -86,6 +86,6 @@ async def metrics(
     project = ProjectCRUD.get_project(session=session, id=project_id)
     csv_path = project.final_dataset_url.replace(BASE_URL, ".")
     df = pd.read_csv(csv_path)
-    m = Metrics(df,x=x, y=y, modal_path=MODAL_PATH)
+    m = Metrics(df,x=x, y=y, modal_path=MODAL_PATH,project_id=project_id)
     evaluation_metrics = getattr(m, Models.value)
     return {"Models":Models,"evaluation metrics":evaluation_metrics}
