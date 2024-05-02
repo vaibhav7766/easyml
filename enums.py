@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class Plots(str, Enum):
     plot = "plot"
     bar = "bar"
@@ -8,11 +9,13 @@ class Plots(str, Enum):
     hist = "hist"
     heatmap = "heatmap"
 
+
 class Options(str, Enum):
     remove_nulls = "remove_nulls"
     encode = "encode"
     feature_scaling = "feature_scaling"
-    
+
+
 class Modes(str, Enum):
     median = "median"
     mean = "mean"
@@ -22,8 +25,9 @@ class Modes(str, Enum):
     standard = "standard"
     minmax = "minmax"
     none = "none"
-    
-class Modals(str, Enum):
+
+
+class Models(str, Enum):
     liner_regression = "liner_regression"
     logistic_regression = "logistic_regression"
     decision_tree = "decision_tree"

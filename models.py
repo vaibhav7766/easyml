@@ -9,10 +9,12 @@ class ProjectBase(SQLModel):
     dataset_url: str
     user_id: int
 
+
 # Database model, database table inferred from class name
 class Project(ProjectBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str
+    description: str
     dataset_url: str
     user_id: int
     edit_dataset_url: str
