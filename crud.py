@@ -1,4 +1,4 @@
-from sqlmodel import Session, select
+from sqlmodel import Session, select, update
 from models import Project
 
 
@@ -23,4 +23,16 @@ class ProjectCRUD:
     def get_project(session: Session, id: int) -> Project | None:
         statement = select(Project).where(Project.id == id)
         project = session.exec(statement).first()
+        return project
+
+    @staticmethod
+    def update_project(session: Session, project: Project) -> Project | None:
+        statement = (
+            update(Project)
+            .where(Project.id == project.id)
+            .values(**project.model_dump())
+        )
+        session.exec(statement)
+        session.commit()
+        session.refresh(project)
         return project

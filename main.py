@@ -86,8 +86,12 @@ def description(df: pd.DataFrame) -> dict:
 @app.get("/describe")
 async def describe(session: SessionDep, project_id: int):
     project = ProjectCRUD.get_project(session=session, id=project_id)
-    csv_path = project.dataset_url.replace(BASE_URL, ".")
-    df = pd.read_csv(csv_path)
+    csv_name = project.dataset_url.replace(BASE_URL + DATASETS_PATH[1:], "")
+    csv_path = FINAL_DATASET_PATH + "final_" + csv_name
+    original = project.dataset_url.replace(BASE_URL, ".")
+    df = pd.read_csv(original)
+    if os.path.exists(csv_path):
+        df = pd.read_csv(csv_path)
     return description(df)
 
 
@@ -123,15 +127,11 @@ async def preprocess(
     v = Preprocessing(df, csv_name, FINAL_DATASET_PATH, EDIT_DATASET_PATH)
     preprocess_function = getattr(v, option.value)
     preprocess_function(mode)
-    edit_dataset_url = f"{BASE_URL}/static/edit/edit_{option}_{csv_name}"
+    edit_dataset_url = f"{BASE_URL}/static/edit/edit_{option.value}_{csv_name}"
     final_dataset_url = f"{BASE_URL}/static/final/final_{csv_name}"
-    project = Project(
-        user_id=project_id,
-        name=project.name,
-        dataset_url=project.dataset_url,
-        edit_dataset_url=edit_dataset_url,
-        final_dataset_url=final_dataset_url,
-    )
+    project.edit_dataset_url = edit_dataset_url
+    project.final_dataset_url = final_dataset_url
+    ProjectCRUD.update_project(session, project)
     return description(v.df_final)
 
 
@@ -145,3 +145,21 @@ async def metrics(
     m = Metrics(df, x=x, y=y, model_path=MODEL_PATH, project_id=project_id)
     evaluation_metrics = getattr(m, model.value)
     return {"model": model, "evaluation metrics": evaluation_metrics}
+
+
+@app.get("/reset_project")
+async def reset_project(session: SessionDep, project_id: int):
+    project = ProjectCRUD.get_project(session=session, id=project_id)
+    csv_path = project.dataset_url.replace(BASE_URL, ".")
+    csv_name = csv_path.split("/")[-1]
+    if os.path.exists(csv_path):
+        edit = list(
+            filter(lambda x: x.endswith(csv_name), os.listdir(EDIT_DATASET_PATH))
+        )
+        final = list(
+            filter(lambda x: x.endswith(csv_name), os.listdir(FINAL_DATASET_PATH))
+        )
+        for csv in edit:
+            os.remove(os.path.join(EDIT_DATASET_PATH, csv))
+        for csv in final:
+            os.remove(os.path.join(FINAL_DATASET_PATH, csv))
