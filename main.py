@@ -148,7 +148,7 @@ async def metrics(
 
 
 @app.get("/reset_project")
-async def reset_project(session: SessionDep, project_id: int):
+async def reset_project(session: SessionDep, project_id: int, delete: bool = False):
     project = ProjectCRUD.get_project(session=session, id=project_id)
     csv_path = project.dataset_url.replace(BASE_URL, ".")
     csv_name = csv_path.split("/")[-1]
@@ -163,3 +163,6 @@ async def reset_project(session: SessionDep, project_id: int):
             os.remove(os.path.join(EDIT_DATASET_PATH, csv))
         for csv in final:
             os.remove(os.path.join(FINAL_DATASET_PATH, csv))
+
+        if delete:
+            os.remove(csv_path)
