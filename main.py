@@ -76,6 +76,7 @@ def description(df: pd.DataFrame) -> dict:
     isna.rename(columns={"index": "Column", 0: "Null Count"}, inplace=True)
     return {
         "dims": df.shape,
+        "cols": df.columns.to_list(),
         "df": df.to_html(index=False),
         "info": info,
         "desc": desc.to_html(index=False),
@@ -103,14 +104,21 @@ async def visualize(
     project_id: int,
     x: str | None = None,
     y: str | None = None,
+    corr: bool = False,
 ):
     project = ProjectCRUD.get_project(session=session, id=project_id)
-    csv_path = project.dataset_url.replace(BASE_URL, ".")
+    csv_path = project.final_dataset_url.replace(BASE_URL, ".")
     df = pd.read_csv(csv_path)
     v = Visualization(df)
-    plot_function = getattr(v, plot_name.value)
-    plot_html = plot_function(x=x, y=y)
-    return {"plot_name": plot_name, "plot_html": plot_html}
+    if plot_name == Plots.heatmap and corr:
+        plot_html = v.heatmap(df.corr(numeric_only=True))
+    elif plot_name == Plots.heatmap and not corr:
+        plot_html = v.heatmap()
+    else:
+        plot_function = getattr(v, plot_name.value)
+        plot_html = plot_function(x=x, y=y)
+
+    return {"name": plot_name, "plot": plot_html}
 
 
 @app.get("/preprocess/{option}")
