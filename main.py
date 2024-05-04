@@ -1,5 +1,6 @@
 from fastapi.staticfiles import StaticFiles
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, UploadFile, Query
+from typing import Annotated
 import pandas as pd
 import secrets
 
@@ -145,14 +146,19 @@ async def preprocess(
 
 @app.get("/metrics/{model}")
 async def metrics(
-    model: Models, session: SessionDep, x: str | None, y: str | None, project_id: int
+    model: Models,
+    session: SessionDep,
+    y: str,
+    project_id: int,
+    x: Annotated[list[str], Query()] = [],
 ):
     project = ProjectCRUD.get_project(session=session, id=project_id)
     csv_path = project.final_dataset_url.replace(BASE_URL, ".")
     df = pd.read_csv(csv_path)
     m = Metrics(df, x=x, y=y, model_path=MODEL_PATH, project_id=project_id)
-    evaluation_metrics = getattr(m, model.value)
-    return {"model": model, "evaluation metrics": evaluation_metrics}
+    metrics = getattr(m, model.value)()
+    model = f"{BASE_URL}{MODEL_PATH[1:]}{model.value}_model_{project_id}.pkl"
+    return {"model_path": model, "metrics": metrics}
 
 
 @app.get("/reset_project")
@@ -167,10 +173,15 @@ async def reset_project(session: SessionDep, project_id: int, delete: bool = Fal
         final = list(
             filter(lambda x: x.endswith(csv_name), os.listdir(FINAL_DATASET_PATH))
         )
-        for csv in edit:
-            os.remove(os.path.join(EDIT_DATASET_PATH, csv))
-        for csv in final:
-            os.remove(os.path.join(FINAL_DATASET_PATH, csv))
+        models = list(
+            filter(lambda x: x.endswith(f"{project_id}.pkl"), os.listdir(MODEL_PATH))
+        )
+        for file in edit:
+            os.remove(os.path.join(EDIT_DATASET_PATH, file))
+        for file in final:
+            os.remove(os.path.join(FINAL_DATASET_PATH, file))
+        for file in models:
+            os.remove(os.path.join(MODEL_PATH, file))
 
         if delete:
             os.remove(csv_path)
