@@ -37,7 +37,7 @@ class Models(str, Enum):
     logistic_regression = "logistic_regression"
     decision_tree = "decision_tree"
     k_nearest_neighbors = "k_nearest_neighbors"
-    support_vector_machines = "support_vector_machines"
+    support_vector_machine = "support_vector_machine"
     polynomial_regression = "polynomial_regression"
     lasso_regression = "lasso_regression"
     ridge_regression = "ridge_regression"

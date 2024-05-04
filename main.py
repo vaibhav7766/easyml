@@ -1,5 +1,6 @@
 from fastapi.staticfiles import StaticFiles
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, UploadFile, Query
+from typing import Annotated
 import pandas as pd
 import secrets
 
@@ -76,6 +77,7 @@ def description(df: pd.DataFrame) -> dict:
     isna.rename(columns={"index": "Column", 0: "Null Count"}, inplace=True)
     return {
         "dims": df.shape,
+        "cols": df.columns.to_list(),
         "df": df.to_html(index=False),
         "info": info,
         "desc": desc.to_html(index=False),
@@ -103,14 +105,21 @@ async def visualize(
     project_id: int,
     x: str | None = None,
     y: str | None = None,
+    corr: bool = False,
 ):
     project = ProjectCRUD.get_project(session=session, id=project_id)
-    csv_path = project.dataset_url.replace(BASE_URL, ".")
+    csv_path = project.final_dataset_url.replace(BASE_URL, ".")
     df = pd.read_csv(csv_path)
     v = Visualization(df)
-    plot_function = getattr(v, plot_name.value)
-    plot_html = plot_function(x=x, y=y)
-    return {"plot_name": plot_name, "plot_html": plot_html}
+    if plot_name == Plots.heatmap and corr:
+        plot_html = v.heatmap(df.corr(numeric_only=True))
+    elif plot_name == Plots.heatmap and not corr:
+        plot_html = v.heatmap()
+    else:
+        plot_function = getattr(v, plot_name.value)
+        plot_html = plot_function(x=x, y=y)
+
+    return {"name": plot_name, "plot": plot_html}
 
 
 @app.get("/preprocess/{option}")
@@ -137,14 +146,19 @@ async def preprocess(
 
 @app.get("/metrics/{model}")
 async def metrics(
-    model: Models, session: SessionDep, x: str | None, y: str | None, project_id: int
+    model: Models,
+    session: SessionDep,
+    y: str,
+    project_id: int,
+    x: Annotated[list[str], Query()] = [],
 ):
     project = ProjectCRUD.get_project(session=session, id=project_id)
     csv_path = project.final_dataset_url.replace(BASE_URL, ".")
     df = pd.read_csv(csv_path)
     m = Metrics(df, x=x, y=y, model_path=MODEL_PATH, project_id=project_id)
-    evaluation_metrics = getattr(m, model.value)
-    return {"model": model, "evaluation metrics": evaluation_metrics}
+    metrics = getattr(m, model.value)()
+    model = f"{BASE_URL}{MODEL_PATH[1:]}{model.value}_model_{project_id}.pkl"
+    return {"model_path": model, "metrics": metrics}
 
 
 @app.get("/reset_project")
@@ -159,10 +173,15 @@ async def reset_project(session: SessionDep, project_id: int, delete: bool = Fal
         final = list(
             filter(lambda x: x.endswith(csv_name), os.listdir(FINAL_DATASET_PATH))
         )
-        for csv in edit:
-            os.remove(os.path.join(EDIT_DATASET_PATH, csv))
-        for csv in final:
-            os.remove(os.path.join(FINAL_DATASET_PATH, csv))
+        models = list(
+            filter(lambda x: x.endswith(f"{project_id}.pkl"), os.listdir(MODEL_PATH))
+        )
+        for file in edit:
+            os.remove(os.path.join(EDIT_DATASET_PATH, file))
+        for file in final:
+            os.remove(os.path.join(FINAL_DATASET_PATH, file))
+        for file in models:
+            os.remove(os.path.join(MODEL_PATH, file))
 
         if delete:
             os.remove(csv_path)
