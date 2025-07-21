@@ -1,19 +1,16 @@
-from sqlmodel import SQLModel, Session, create_engine
-from fastapi import Depends
-from typing import Annotated
+import os
+from pymongo import MongoClient
 
+def get_mongo_client():
+    mongo_uri = os.environ.get("MONGO_URI")
+    if not mongo_uri:
+        raise RuntimeError("MONGO_URI not set in environment variables")
+    return MongoClient(mongo_uri)
 
-# Create a database engine
-DATABASE_URL = "postgresql://postgres:admin@localhost/easyml"
-engine = create_engine(DATABASE_URL)
-SQLModel.metadata.create_all(engine)
-
-
-# Create a session
-def get_session():
-    with Session(engine) as session:
-        yield session
-
-
-# Create a session dependency
-SessionDep = Annotated[Session, Depends(get_session)]
+def SessionDep():
+    client = get_mongo_client()
+    db = client.get_default_database()  # or specify db name if needed
+    try:
+        yield db
+    finally:
+        client.close()

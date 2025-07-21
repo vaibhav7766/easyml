@@ -1,43 +1,23 @@
 from enum import Enum
 
-
 class Plots(str, Enum):
-    plot = "plot"
-    bar = "bar"
-    scatter = "scatter"
-    boxplot = "boxplot"
-    hist = "hist"
-    heatmap = "heatmap"
-
+    HISTOGRAM = "histogram"
+    SCATTER = "scatter"
+    CORRELATION = "correlation"
+    # Add more plot types as needed
 
 class Options(str, Enum):
-    remove_nulls = "remove_nulls"
-    encode = "encode"
-    feature_scaling = "feature_scaling"
-
+    CLEANING = "cleaning"
+    NORMALIZATION = "normalization"
+    ENCODING = "encoding"
+    # Add more preprocessing options as needed
 
 class Modes(str, Enum):
-    median = "median"
-    mean = "mean"
-    mode = "mode"
-    bfill = "bfill"
-    ffill = "ffill"
-    pairwise = "pairwise"
-    column = "column"
-    row = "row"
-    onehot = "onehot"
-    label = "label"
-    standard = "standard"
-    minmax = "minmax"
-    none = "none"
-
+    TRAIN = "train"
+    TEST = "test"
+    # Add more modes as needed
 
 class Models(str, Enum):
-    liner_regression = "liner_regression"
-    logistic_regression = "logistic_regression"
-    decision_tree = "decision_tree"
-    k_nearest_neighbors = "k_nearest_neighbors"
-    support_vector_machine = "support_vector_machine"
-    polynomial_regression = "polynomial_regression"
-    lasso_regression = "lasso_regression"
-    ridge_regression = "ridge_regression"
+    LINEAR_REGRESSION = "linear_regression"
+    RANDOM_FOREST = "random_forest"
+    # Add more models as needed

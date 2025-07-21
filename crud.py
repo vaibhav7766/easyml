@@ -1,38 +1,15 @@
-from sqlmodel import Session, select, update
-from models import Project
+from bson import ObjectId
 
-
-# Project CRUD operations
 class ProjectCRUD:
+    def __init__(self, session):
+        self.session = session  # session is a MongoDB database
 
-    @staticmethod
-    def create_project(session: Session, project: Project) -> Project:
-        project = Project.model_validate(project)
-        session.add(project)
-        session.commit()
-        session.refresh(project)
+    def get_project(self, project_id):
+        """Fetch a project by its ObjectId string."""
+        project = self.session["projects"].find_one({"_id": ObjectId(project_id)})
         return project
 
-    @staticmethod
-    def get_projects(session: Session) -> list[Project]:
-        statement = select(Project)
-        projects = session.exec(statement).all()
-        return projects
-
-    @staticmethod
-    def get_project(session: Session, id: int) -> Project | None:
-        statement = select(Project).where(Project.id == id)
-        project = session.exec(statement).first()
-        return project
-
-    @staticmethod
-    def update_project(session: Session, project: Project) -> Project | None:
-        statement = (
-            update(Project)
-            .where(Project.id == project.id)
-            .values(**project.model_dump())
-        )
-        session.exec(statement)
-        session.commit()
-        session.refresh(project)
-        return project
+    def add_project(self, project):
+        """Insert a new project document and return its inserted_id."""
+        result = self.session["projects"].insert_one(project)
+        return str(result.inserted_id)
