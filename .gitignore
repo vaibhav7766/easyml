@@ -122,6 +122,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.direnv/
 env/
 venv/
 ENV/
@@ -163,3 +164,4 @@ cython_debug/
 static/
 *.csv
 *.txt
+!requirements.txt

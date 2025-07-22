@@ -1,0 +1,40 @@
+# FastAPI and Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+aiofiles==23.2.1
+
+# Data Processing and Analysis
+pandas==2.1.3
+numpy==1.25.2
+scikit-learn==1.3.2
+
+# Visualization
+matplotlib==3.8.2
+seaborn==0.13.0
+
+# Database
+pymongo==4.6.0
+motor==3.3.2
+
+# Configuration and Environment
+pydantic==2.5.0
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# File Processing
+openpyxl==3.1.2
+xlrd==2.0.1
+pyarrow==14.0.1
+
+# Model Serialization
+joblib==1.3.2
+
+# Development and Testing (optional)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2
+
+# Documentation (optional)
+mkdocs==1.5.3
+mkdocs-material==9.4.8

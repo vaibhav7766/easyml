@@ -4,6 +4,7 @@ import pandas as pd
 class Preprocessing:
     def __init__(self, data):
         self.data = data
+        self.is_categorical = False  # Default value, can be set externally
     
     def encode(self, choice: str, column: str):
         """Handle categorical encoding in the dataset."""
@@ -17,7 +18,7 @@ class Preprocessing:
         """Handle missing values in the dataset."""
         # methods = ["mean", "median", "mode", "drop", "knn"]
         if self.data[column].isnull().any():
-            if choice == "mean":
+            if choice == "mean" and self.is_categorical is False :
                 self.data[column].fillna(self.data[column].mean(), inplace=True)
             elif choice == "median":
                 self.data[column].fillna(self.data[column].median(), inplace=True)
@@ -28,6 +29,7 @@ class Preprocessing:
             elif choice == "knn":
                 imputer = KNNImputer(n_neighbors=5)
                 self.data[[column]] = imputer.fit_transform(self.data[[column]])
+                
         return self.data
 
     def delete_columns(self, selected_columns: list):
@@ -49,4 +51,5 @@ class Preprocessing:
             q3 = self.data[column].quantile(0.75)
             iqr = q3 - q1
             self.data[column] = (self.data[column] - median) / iqr
+            
         return self.data
