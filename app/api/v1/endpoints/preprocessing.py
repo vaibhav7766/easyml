@@ -3,10 +3,32 @@ Data preprocessing endpoints
 """
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict, List, Optional
+import numpy as np
 
 from app.services.preprocessing import PreprocessingService
 from app.services.file_service import FileService
 from app.schemas.schemas import PreprocessingRequest, PreprocessingResponse, ErrorResponse
+
+
+def to_serializable(val):
+    """Convert numpy types to JSON serializable Python types"""
+    if isinstance(val, dict):
+        return {k: to_serializable(v) for k, v in val.items()}
+    elif isinstance(val, (list, tuple)):
+        return [to_serializable(v) for v in val]
+    elif isinstance(val, (np.integer, np.int_, np.intc, np.intp, np.int8,
+                        np.int16, np.int32, np.int64, np.uint8, np.uint16,
+                        np.uint32, np.uint64)):
+        return int(val)
+    elif isinstance(val, (np.floating, np.float_, np.float16, np.float32, np.float64)):
+        return float(val)
+    elif isinstance(val, np.ndarray):
+        return val.tolist()
+    elif isinstance(val, np.bool_):
+        return bool(val)
+    elif isinstance(val, np.dtype):
+        return str(val)
+    return val
 
 router = APIRouter()
 file_service = FileService()
@@ -44,15 +66,19 @@ async def apply_preprocessing(request: PreprocessingRequest):
     # Get processed data summary
     data_summary = preprocess_service.get_data_summary()
     
+    # Convert numpy types to JSON serializable
+    serialized_result = to_serializable(result)
+    serialized_summary = to_serializable(data_summary)
+    
     return PreprocessingResponse(
         success=True,
-        applied_operations=result["applied_operations"],
-        errors=result["errors"],
-        data_shape_before=result["data_shape_before"],
-        data_shape_after=result["data_shape_after"],
-        columns_before=result["columns_before"],
-        columns_after=result["columns_after"],
-        data_summary=data_summary
+        applied_operations=serialized_result["applied_operations"],
+        errors=serialized_result["errors"],
+        data_shape_before=serialized_result["data_shape_before"],
+        data_shape_after=serialized_result["data_shape_after"],
+        columns_before=serialized_result["columns_before"],
+        columns_after=serialized_result["columns_after"],
+        data_summary=serialized_summary
     )
 
 
@@ -101,9 +127,12 @@ async def get_data_summary(file_id: str):
     # Get data summary
     summary = preprocess_service.get_data_summary()
     
+    # Convert numpy types to JSON serializable
+    serialized_summary = to_serializable(summary)
+    
     return {
         "success": True,
-        "data_summary": summary
+        "data_summary": serialized_summary
     }
 
 
@@ -211,37 +240,44 @@ async def get_preprocessing_recommendations(file_id: str):
                     "reason": f"Column has {outlier_percentage:.1f}% outliers - recommend cleaning"
                 })
     
+    # Convert numpy types to JSON serializable
+    serialized_summary = to_serializable(summary)
+    serialized_recommendations = to_serializable(recommendations)
+    
     return {
         "success": True,
-        "recommendations": recommendations,
+        "recommendations": serialized_recommendations,
         "total_recommendations": len(recommendations),
-        "data_summary": summary
+        "data_summary": serialized_summary
     }
 
 
-@router.post("/export")
-async def export_processed_data(
-    file_id: str,
-    operations: Dict[str, str],
-    export_format: str = "csv",
+from pydantic import BaseModel
+
+class ExportRequest(BaseModel):
+    file_id: str
+    operations: Dict[str, str]
+    export_format: str = "csv"
     filename: Optional[str] = None
-):
+
+@router.post("/export")
+async def export_processed_data(request: ExportRequest):
     """
     Apply preprocessing and export the processed data
     
     - **file_id**: ID of the uploaded data file
-    - **operations**: Preprocessing operations to apply
+    - **operations**: Dictionary mapping operation types to columns
     - **export_format**: Export format (csv, excel, json, parquet)
     - **filename**: Optional custom filename
     """
     # Load data
-    data = await get_data_dependency(file_id)
+    data = await get_data_dependency(request.file_id)
     
     # Create preprocessing service
     preprocess_service = PreprocessingService(data)
     
     # Apply preprocessing
-    preprocess_result = preprocess_service.apply_preprocessing(operations)
+    preprocess_result = preprocess_service.apply_preprocessing(request.operations)
     
     if preprocess_result["errors"]:
         raise HTTPException(
@@ -253,8 +289,8 @@ async def export_processed_data(
     processed_data = preprocess_service.get_processed_data()
     
     # Export data
-    export_filename = filename or f"processed_data_{file_id}"
-    export_result = file_service.export_data(processed_data, export_filename, export_format)
+    export_filename = request.filename or f"processed_data_{request.file_id}"
+    export_result = file_service.export_data(processed_data, export_filename, request.export_format)
     
     if not export_result.get("success", False):
         raise HTTPException(status_code=500, detail=export_result.get("error", "Export failed"))
@@ -263,7 +299,7 @@ async def export_processed_data(
         "success": True,
         "preprocessing_applied": preprocess_result["applied_operations"],
         "export_file_id": export_result["file_id"],
-        "export_format": export_format,
+        "export_format": request.export_format,
         "file_size": export_result["size"],
         "processed_shape": processed_data.shape
     }

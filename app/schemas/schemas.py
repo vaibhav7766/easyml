@@ -1,7 +1,7 @@
 """
 Pydantic schemas for request/response models
 """
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Union
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -76,7 +76,7 @@ class FileUploadResponse(BaseSchema):
 class PreprocessingRequest(BaseSchema):
     """Schema for preprocessing request"""
     file_id: str
-    operations: Dict[str, str] = Field(..., description="Preprocessing operations mapping")
+    operations: Dict[str, Union[str, List[str]]] = Field(..., description="Preprocessing operations mapping")
     is_categorical: bool = False
 
 

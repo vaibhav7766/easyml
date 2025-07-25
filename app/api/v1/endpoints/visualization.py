@@ -40,7 +40,7 @@ async def generate_visualization(request: VisualizationRequest):
     viz_service = VisualizationService(data)
     
     # Generate plot
-    result = viz_service.create_plot(
+    result = viz_service.generate_plot(
         plot_type=request.plot_type,
         x_column=request.x_column,
         y_column=request.y_column,
@@ -212,7 +212,7 @@ async def generate_batch_visualizations(
     
     for plot_type in plot_types:
         try:
-            result = viz_service.create_plot(
+            result = viz_service.generate_plot(
                 plot_type=plot_type,
                 x_column=x_column,
                 y_column=y_column,
