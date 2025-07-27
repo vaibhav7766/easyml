@@ -1,0 +1,5 @@
+[core]
+    remote = azure
+['remote "azure"']
+    url = azure://easyml-dvc-store
+    connection_string = DefaultEndpointsProtocol=https;AccountName=easymlstorage;AccountKey=pu+G9VY8Nj4OVIRSHMkNJkdfn/YylwwicwAp/RonCJrD4bxTu2jssV62wo2FJin6XhN45hze25a++AStmX+vRg==;EndpointSuffix=core.windows.net

@@ -1,0 +1,4 @@
+# 📁 .gitkeep
+
+This file keeps the uploads directory in git while allowing it to be empty.
+The uploads directory is used for temporary file storage during dataset uploads.

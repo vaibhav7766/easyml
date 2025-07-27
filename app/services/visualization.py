@@ -1,309 +1,535 @@
 """
-Visualization service for handling all plot generation
+Visualization service for handling all plot generation using Plotly
 """
-import matplotlib.pyplot as plt
-import seaborn as sns
+import plotly.graph_objects as go
+import plotly.express as px
+import plotly.figure_factory as ff
+from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
-import io
-import base64
+import json
 from sklearn.decomposition import PCA
 from sklearn.model_selection import learning_curve
 from scipy.stats import chi2_contingency
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List
 
-from app.core.config import settings
+from app.core.config import get_settings
 from app.core.enums import PlotType
 
 
 class VisualizationService:
-    """Service for generating data visualizations"""
+    """Service for generating interactive data visualizations using Plotly"""
     
     def __init__(self, data: pd.DataFrame):
         self.data = data
-        self.figure_size = settings.default_figure_size
+        self.settings = get_settings()
+        # Default theme and styling
+        self.theme = "plotly_white"
+        self.color_palette = px.colors.qualitative.Set1
     
-    def _to_base64(self) -> str:
-        """Convert current matplotlib plot to base64 string"""
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
-        buf.seek(0)
-        image_base64 = base64.b64encode(buf.read()).decode('utf-8')
-        plt.close()
-        return image_base64
-    
-    def generate_plot(
+    def create_plot(
         self, 
         plot_type: PlotType, 
-        x: Optional[str] = None,
-        y: Optional[str] = None,
-        hue: Optional[str] = None,
-        target: Optional[str] = None,
-        model: Optional[Any] = None,
-        top_k: Optional[int] = None
-    ) -> str:
-        """Generate plot based on type and parameters"""
+        x_column: Optional[str] = None,
+        y_column: Optional[str] = None,
+        color_column: Optional[str] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Generate interactive plot using Plotly
         
-        plt.figure(figsize=self.figure_size)
+        Returns:
+            Dictionary containing plotly JSON, plot info, and metadata
+        """
+        try:
+            # Ensure plot_type is a PlotType enum
+            if isinstance(plot_type, str):
+                plot_type = PlotType(plot_type)
+            
+            # Generate the plot based on type
+            fig = self._generate_plot(plot_type, x_column, y_column, color_column, **kwargs)
+            
+            # Convert to JSON for frontend
+            plotly_json = fig.to_json()
+            
+            return {
+                "plotly_json": plotly_json,
+                "plot_type": plot_type.value if hasattr(plot_type, 'value') else str(plot_type),
+                "plot_info": {
+                    "columns_used": {
+                        "x_column": x_column,
+                        "y_column": y_column, 
+                        "color_column": color_column
+                    },
+                    "data_shape": self.data.shape,
+                    "plot_library": "plotly",
+                    "interactive": True
+                }
+            }
+            
+        except Exception as e:
+            plot_type_name = plot_type.value if hasattr(plot_type, 'value') else str(plot_type)
+            return {"error": f"Error generating {plot_type_name} plot: {str(e)}"}
+    
+    def _generate_plot(
+        self,
+        plot_type: PlotType,
+        x_column: Optional[str] = None,
+        y_column: Optional[str] = None,
+        color_column: Optional[str] = None,
+        **kwargs
+    ) -> go.Figure:
+        """Generate the appropriate plot based on type"""
         
-        # Numeric Feature Visualizations
-        if plot_type == PlotType.HISTOGRAM:
-            return self._create_histogram(x)
-        elif plot_type == PlotType.SCATTER:
-            return self._create_scatter(x, y, hue)
-        elif plot_type == PlotType.CORRELATION_MATRIX:
-            return self._create_correlation_matrix()
-        elif plot_type == PlotType.BOXPLOT:
-            return self._create_boxplot(x, y)
-        elif plot_type == PlotType.PAIRPLOT:
-            return self._create_pairplot(hue, top_k)
-        elif plot_type == PlotType.VIOLIN:
-            return self._create_violin(x, y)
-        elif plot_type == PlotType.KDE:
-            return self._create_kde(x)
+        # Route to appropriate plot method
+        plot_methods = {
+            PlotType.HISTOGRAM: self._create_histogram,
+            PlotType.SCATTER: self._create_scatter,
+            PlotType.CORRELATION_MATRIX: self._create_correlation_matrix,
+            PlotType.BOXPLOT: self._create_boxplot,
+            PlotType.PAIRPLOT: self._create_pairplot,
+            PlotType.VIOLIN: self._create_violin,
+            PlotType.KDE: self._create_kde,
+            PlotType.COUNTPLOT: self._create_countplot,
+            PlotType.PIE: self._create_pie,
+            PlotType.TARGET_MEAN: self._create_target_mean,
+            PlotType.STACKED_BAR: self._create_stacked_bar,
+            PlotType.CHI_SQUARED_HEATMAP: self._create_chi_squared_heatmap,
+            PlotType.PCA_SCATTER: self._create_pca_scatter,
+            PlotType.CLASS_IMBALANCE: self._create_class_imbalance,
+            PlotType.LEARNING_CURVE: self._create_learning_curve
+        }
         
-        # Categorical Feature Visualizations
-        elif plot_type == PlotType.COUNTPLOT:
-            return self._create_countplot(x)
-        elif plot_type == PlotType.PIE:
-            return self._create_pie(x)
-        elif plot_type == PlotType.TARGET_MEAN:
-            return self._create_target_mean(x, target)
-        elif plot_type == PlotType.STACKED_BAR:
-            return self._create_stacked_bar(x, y)
-        elif plot_type == PlotType.CHI_SQUARED_HEATMAP:
-            return self._create_chi_squared_heatmap()
-        
-        # Mixed & ML Use-Case Visualizations
-        elif plot_type == PlotType.PCA_SCATTER:
-            return self._create_pca_scatter(hue)
-        elif plot_type == PlotType.CLASS_IMBALANCE:
-            return self._create_class_imbalance(target)
-        elif plot_type == PlotType.LEARNING_CURVE:
-            return self._create_learning_curve(target, model)
-        
-        else:
+        if plot_type not in plot_methods:
             raise ValueError(f"Plot type '{plot_type}' is not supported.")
+        
+        return plot_methods[plot_type](x_column, y_column, color_column, **kwargs)
     
-    def _create_histogram(self, x: str) -> str:
-        """Create histogram plot"""
-        if not x or x not in self.data.columns:
-            raise ValueError("Please specify a valid column for histogram.")
+    def _create_histogram(self, column: str, y_column=None, color_column=None, **kwargs) -> go.Figure:
+        """Create interactive histogram for numeric column"""
+        if column not in self.data.columns:
+            raise ValueError(f"Column '{column}' not found")
         
-        sns.histplot(self.data[x], kde=True)
-        plt.title(f"Distribution of {x}")
-        return self._to_base64()
-    
-    def _create_scatter(self, x: str, y: str, hue: Optional[str]) -> str:
-        """Create scatter plot"""
-        if not x or not y or x not in self.data.columns or y not in self.data.columns:
-            raise ValueError("Please specify valid x and y columns for scatter plot.")
-        
-        hue_data = self.data[hue] if hue and hue in self.data.columns else None
-        sns.scatterplot(x=self.data[x], y=self.data[y], hue=hue_data)
-        plt.title(f"Scatter Plot: {x} vs {y}")
-        return self._to_base64()
-    
-    def _create_correlation_matrix(self) -> str:
-        """Create correlation matrix heatmap"""
-        corr = self.data.corr(numeric_only=True)
-        sns.heatmap(corr, annot=True, fmt=".2f", cmap='coolwarm', center=0)
-        plt.title("Correlation Matrix")
-        return self._to_base64()
-    
-    def _create_boxplot(self, x: str, y: Optional[str] = None) -> str:
-        """Create box plot"""
-        if not x or x not in self.data.columns:
-            raise ValueError("Please specify a valid column for boxplot.")
-        
-        if y and y in self.data.columns:  # Grouped boxplot
-            sns.boxplot(x=self.data[y], y=self.data[x])
-            plt.title(f"Box Plot: {x} by {y}")
-        else:  # Single variable boxplot
-            sns.boxplot(x=self.data[x])
-            plt.title(f"Box Plot of {x}")
-        
-        return self._to_base64()
-    
-    def _create_pairplot(self, hue: Optional[str], top_k: Optional[int]) -> str:
-        """Create pairplot"""
-        numeric_cols = self.data.select_dtypes(include='number').columns
-        
-        if top_k:
-            numeric_cols = numeric_cols[:top_k]
-        
-        subset_data = self.data[numeric_cols]
-        if hue and hue in self.data.columns:
-            subset_data = subset_data.copy()
-            subset_data[hue] = self.data[hue]
-        
-        sns.pairplot(subset_data, hue=hue if hue else None)
-        plt.suptitle("Pairplot of Numeric Features", y=1.02)
-        return self._to_base64()
-    
-    def _create_violin(self, x: str, y: Optional[str] = None) -> str:
-        """Create violin plot"""
-        if not x or x not in self.data.columns:
-            raise ValueError("Please specify a valid column for violin plot.")
-        
-        if y and y in self.data.columns:  # Grouped violin plot
-            sns.violinplot(x=self.data[y], y=self.data[x])
-            plt.title(f"Violin Plot: {x} by {y}")
-        else:  # Single variable violin plot
-            sns.violinplot(x=self.data[x])
-            plt.title(f"Violin Plot of {x}")
-        
-        return self._to_base64()
-    
-    def _create_kde(self, x: str) -> str:
-        """Create KDE plot"""
-        if not x or x not in self.data.columns:
-            raise ValueError("Please specify a valid column for KDE plot.")
-        
-        sns.kdeplot(data=self.data, x=x, fill=True)
-        plt.title(f"KDE Plot of {x}")
-        return self._to_base64()
-    
-    def _create_countplot(self, x: str) -> str:
-        """Create count plot"""
-        if not x or x not in self.data.columns:
-            raise ValueError("Please specify a valid categorical column for countplot.")
-        
-        sns.countplot(data=self.data, x=x)
-        plt.title(f"Count Plot of {x}")
-        plt.xticks(rotation=45)
-        return self._to_base64()
-    
-    def _create_pie(self, x: str) -> str:
-        """Create pie chart"""
-        if not x or x not in self.data.columns:
-            raise ValueError("Please specify a valid categorical column for pie chart.")
-        
-        value_counts = self.data[x].value_counts()
-        plt.pie(value_counts.values, labels=value_counts.index, autopct='%1.1f%%')
-        plt.title(f"Pie Chart of {x}")
-        return self._to_base64()
-    
-    def _create_target_mean(self, x: str, target: str) -> str:
-        """Create target mean plot"""
-        if not x or not target or x not in self.data.columns or target not in self.data.columns:
-            raise ValueError("Please specify valid categorical column and target for target mean plot.")
-        
-        mean_values = self.data.groupby(x)[target].mean().sort_values()
-        sns.barplot(x=mean_values.index, y=mean_values.values)
-        plt.title(f"Target Mean Plot: {target} by {x}")
-        plt.xticks(rotation=45)
-        return self._to_base64()
-    
-    def _create_stacked_bar(self, x: str, y: str) -> str:
-        """Create stacked bar chart"""
-        if not x or not y or x not in self.data.columns or y not in self.data.columns:
-            raise ValueError("Please specify valid categorical columns for stacked bar chart.")
-        
-        crosstab = pd.crosstab(self.data[x], self.data[y])
-        crosstab.plot(kind='bar', stacked=True, ax=plt.gca())
-        plt.title(f"Stacked Bar Chart: {x} by {y}")
-        plt.xticks(rotation=45)
-        plt.legend(title=y)
-        return self._to_base64()
-    
-    def _create_chi_squared_heatmap(self) -> str:
-        """Create chi-squared heatmap"""
-        cat_cols = self.data.select_dtypes(include=['object', 'category']).columns
-        if len(cat_cols) < 2:
-            raise ValueError("Need at least 2 categorical columns for chi-squared heatmap.")
-        
-        chi2_matrix = np.zeros((len(cat_cols), len(cat_cols)))
-        for i, col1 in enumerate(cat_cols):
-            for j, col2 in enumerate(cat_cols):
-                if i != j:
-                    try:
-                        crosstab = pd.crosstab(self.data[col1], self.data[col2])
-                        chi2_stat, _, _, _ = chi2_contingency(crosstab)
-                        chi2_matrix[i][j] = chi2_stat
-                    except:
-                        chi2_matrix[i][j] = 0
-                else:
-                    chi2_matrix[i][j] = 0
-        
-        sns.heatmap(chi2_matrix, annot=True, fmt='.2f',
-                   xticklabels=cat_cols, yticklabels=cat_cols,
-                   cmap='viridis')
-        plt.title("Chi-squared Statistics Heatmap")
-        return self._to_base64()
-    
-    def _create_pca_scatter(self, hue: Optional[str]) -> str:
-        """Create PCA scatter plot"""
-        numeric_data = self.data.select_dtypes(include='number')
-        if numeric_data.shape[1] < 2:
-            raise ValueError("Need at least 2 numeric features for PCA.")
-        
-        pca = PCA(n_components=2)
-        pca_result = pca.fit_transform(numeric_data.fillna(0))
-        
-        color_data = None
-        if hue and hue in self.data.columns:
-            color_data = self.data[hue].astype('category').cat.codes
-        
-        plt.scatter(pca_result[:, 0], pca_result[:, 1], c=color_data, alpha=0.7)
-        plt.xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)')
-        plt.ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)')
-        plt.title("PCA Scatter Plot (2D)")
-        
-        if color_data is not None:
-            plt.colorbar(label=hue)
-        
-        return self._to_base64()
-    
-    def _create_class_imbalance(self, target: str) -> str:
-        """Create class imbalance plot"""
-        if not target or target not in self.data.columns:
-            raise ValueError("Please specify a valid target column for class imbalance plot.")
-        
-        class_counts = self.data[target].value_counts()
-        sns.barplot(x=class_counts.index, y=class_counts.values)
-        plt.title(f"Class Distribution - {target}")
-        plt.xlabel("Classes")
-        plt.ylabel("Count")
-        
-        # Add percentage labels
-        total = len(self.data)
-        for i, count in enumerate(class_counts.values):
-            plt.text(i, count + total*0.01, f'{count/total:.1%}',
-                    ha='center', va='bottom')
-        
-        return self._to_base64()
-    
-    def _create_learning_curve(self, target: str, model: Any) -> str:
-        """Create learning curve plot"""
-        if model is None or not target:
-            raise ValueError("Model and target are required for learning curve.")
-        
-        numeric_data = self.data.select_dtypes(include='number')
-        X = numeric_data.drop(columns=[target] if target in numeric_data.columns else [])
-        y = self.data[target]
-        
-        train_sizes, train_scores, val_scores = learning_curve(
-            model, X.fillna(0), y, cv=5, n_jobs=-1,
-            train_sizes=np.linspace(0.1, 1.0, 10),
-            scoring='accuracy' if y.dtype == 'object' else 'r2'
+        fig = px.histogram(
+            self.data, 
+            x=column,
+            nbins=kwargs.get('bins', 30),
+            title=f'Histogram of {column}',
+            template=self.theme
         )
         
+        fig.update_layout(
+            xaxis_title=column,
+            yaxis_title='Frequency',
+            showlegend=False
+        )
+        
+        return fig
+    
+    def _create_scatter(self, x: str, y: str, color_column: Optional[str] = None, **kwargs) -> go.Figure:
+        """Create interactive scatter plot"""
+        if x not in self.data.columns or y not in self.data.columns:
+            raise ValueError("Invalid column(s)")
+        
+        fig = px.scatter(
+            self.data,
+            x=x,
+            y=y,
+            color=color_column if color_column and color_column in self.data.columns else None,
+            title=f'Scatter Plot: {x} vs {y}',
+            template=self.theme
+        )
+        
+        fig.update_layout(
+            xaxis_title=x,
+            yaxis_title=y
+        )
+        
+        return fig
+    
+    def _create_correlation_matrix(self, x_column=None, y_column=None, color_column=None, **kwargs) -> go.Figure:
+        """Create interactive correlation heatmap for numeric columns"""
+        numeric_data = self.data.select_dtypes(include=[np.number])
+        correlation_matrix = numeric_data.corr()
+        
+        fig = px.imshow(
+            correlation_matrix,
+            text_auto=True,
+            aspect="auto",
+            title='Correlation Matrix',
+            template=self.theme,
+            color_continuous_scale='RdBu'
+        )
+        
+        return fig
+    
+    def _create_boxplot(self, x: str, y: Optional[str] = None, color_column=None, **kwargs) -> go.Figure:
+        """Create interactive box plot"""
+        if x not in self.data.columns:
+            raise ValueError(f"Column '{x}' not found")
+        
+        if y and y in self.data.columns:
+            fig = px.box(
+                self.data,
+                x=x,
+                y=y,
+                title=f'Box Plot: {y} by {x}',
+                template=self.theme
+            )
+        else:
+            fig = px.box(
+                self.data,
+                y=x,
+                title=f'Box Plot of {x}',
+                template=self.theme
+            )
+        
+        return fig
+    
+    def _create_pairplot(self, x_column=None, y_column=None, color_column: Optional[str] = None, **kwargs) -> go.Figure:
+        """Create interactive pairplot (scatter matrix) for numeric features"""
+        numeric_data = self.data.select_dtypes(include=[np.number])
+        
+        # Limit to top_k features if specified
+        top_k = kwargs.get('top_k')
+        if top_k and len(numeric_data.columns) > top_k:
+            numeric_data = numeric_data.iloc[:, :top_k]
+        
+        plot_data = numeric_data.copy()
+        if color_column and color_column in self.data.columns:
+            plot_data[color_column] = self.data[color_column]
+        
+        fig = px.scatter_matrix(
+            plot_data,
+            dimensions=numeric_data.columns,
+            color=color_column if color_column and color_column in plot_data.columns else None,
+            title='Pairplot of Numeric Features',
+            template=self.theme
+        )
+        
+        return fig
+    
+    def _create_violin(self, x: str, y: Optional[str] = None, color_column=None, **kwargs) -> go.Figure:
+        """Create interactive violin plot"""
+        if x not in self.data.columns:
+            raise ValueError(f"Column '{x}' not found")
+        
+        if y and y in self.data.columns:
+            fig = px.violin(
+                self.data,
+                x=x,
+                y=y,
+                title=f'Violin Plot: {y} by {x}',
+                template=self.theme,
+                box=True
+            )
+        else:
+            fig = px.violin(
+                self.data,
+                y=x,
+                title=f'Violin Plot of {x}',
+                template=self.theme,
+                box=True
+            )
+        
+        return fig
+    
+    def _create_kde(self, column: str, y_column=None, color_column=None, **kwargs) -> go.Figure:
+        """Create KDE plot using Plotly"""
+        if column not in self.data.columns:
+            raise ValueError(f"Column '{column}' not found")
+        
+        # Create KDE using distplot
+        hist_data = [self.data[column].dropna()]
+        group_labels = [column]
+        
+        fig = ff.create_distplot(
+            hist_data,
+            group_labels,
+            show_hist=False,
+            show_rug=False
+        )
+        
+        fig.update_layout(
+            title=f'KDE Plot of {column}',
+            xaxis_title=column,
+            yaxis_title='Density',
+            template=self.theme
+        )
+        
+        return fig
+    
+    def _create_countplot(self, column: str, y_column=None, color_column=None, **kwargs) -> go.Figure:
+        """Create interactive count plot for categorical data"""
+        if column not in self.data.columns:
+            raise ValueError(f"Column '{column}' not found")
+        
+        value_counts = self.data[column].value_counts()
+        
+        fig = px.bar(
+            x=value_counts.index,
+            y=value_counts.values,
+            title=f'Count Plot of {column}',
+            template=self.theme
+        )
+        
+        fig.update_layout(
+            xaxis_title=column,
+            yaxis_title='Count'
+        )
+        
+        return fig
+    
+    def _create_pie(self, column: str, y_column=None, color_column=None, **kwargs) -> go.Figure:
+        """Create interactive pie chart"""
+        if column not in self.data.columns:
+            raise ValueError(f"Column '{column}' not found")
+        
+        value_counts = self.data[column].value_counts()
+        
+        fig = px.pie(
+            values=value_counts.values,
+            names=value_counts.index,
+            title=f'Pie Chart of {column}',
+            template=self.theme
+        )
+        
+        return fig
+    
+    def _create_target_mean(self, x_column: str, y_column: str, color_column=None, **kwargs) -> go.Figure:
+        """Create target mean plot"""
+        if x_column not in self.data.columns or y_column not in self.data.columns:
+            raise ValueError("Invalid column(s)")
+        
+        target_means = self.data.groupby(x_column)[y_column].mean().sort_values(ascending=False)
+        
+        fig = px.bar(
+            x=target_means.index,
+            y=target_means.values,
+            title=f'Mean {y_column} by {x_column}',
+            template=self.theme
+        )
+        
+        fig.update_layout(
+            xaxis_title=x_column,
+            yaxis_title=f'Mean {y_column}'
+        )
+        
+        return fig
+    
+    def _create_stacked_bar(self, x: str, y: str, color_column=None, **kwargs) -> go.Figure:
+        """Create interactive stacked bar chart"""
+        if x not in self.data.columns or y not in self.data.columns:
+            raise ValueError("Invalid column(s)")
+        
+        # Create crosstab
+        cross_tab = pd.crosstab(self.data[x], self.data[y])
+        
+        fig = go.Figure()
+        
+        for col in cross_tab.columns:
+            fig.add_trace(go.Bar(
+                name=str(col),
+                x=cross_tab.index,
+                y=cross_tab[col],
+                text=cross_tab[col],
+                textposition='inside'
+            ))
+        
+        fig.update_layout(
+            title=f'Stacked Bar Chart: {x} vs {y}',
+            xaxis_title=x,
+            yaxis_title='Count',
+            barmode='stack',
+            template=self.theme
+        )
+        
+        return fig
+    
+    def _create_chi_squared_heatmap(self, x_column=None, y_column=None, color_column=None, **kwargs) -> go.Figure:
+        """Create chi-squared test heatmap for categorical variables"""
+        categorical_cols = self.data.select_dtypes(include=['object', 'category']).columns
+        
+        if len(categorical_cols) < 2:
+            raise ValueError("Need at least 2 categorical columns for chi-squared analysis")
+        
+        chi2_matrix = pd.DataFrame(index=categorical_cols, columns=categorical_cols)
+        
+        for col1 in categorical_cols:
+            for col2 in categorical_cols:
+                if col1 != col2:
+                    contingency_table = pd.crosstab(self.data[col1], self.data[col2])
+                    chi2, p_value, _, _ = chi2_contingency(contingency_table)
+                    chi2_matrix.loc[col1, col2] = p_value
+                else:
+                    chi2_matrix.loc[col1, col2] = 1.0
+        
+        chi2_matrix = chi2_matrix.astype(float)
+        
+        fig = px.imshow(
+            chi2_matrix,
+            text_auto=True,
+            aspect="auto",
+            title='Chi-squared Test P-values Heatmap',
+            template=self.theme,
+            color_continuous_scale='RdBu'
+        )
+        
+        return fig
+    
+    def _create_pca_scatter(self, x_column=None, y_column=None, color_column: Optional[str] = None, **kwargs) -> go.Figure:
+        """Create interactive PCA scatter plot"""
+        numeric_data = self.data.select_dtypes(include=[np.number])
+        
+        if numeric_data.shape[1] < 2:
+            raise ValueError("Need at least 2 numeric columns for PCA")
+        
+        # Remove any rows with NaN values
+        numeric_data = numeric_data.dropna()
+        
+        pca = PCA(n_components=2)
+        pca_result = pca.fit_transform(numeric_data)
+        
+        pca_df = pd.DataFrame(pca_result, columns=['PC1', 'PC2'])
+        
+        if color_column and color_column in self.data.columns:
+            pca_df[color_column] = self.data[color_column].values[:len(pca_df)]
+        
+        fig = px.scatter(
+            pca_df,
+            x='PC1',
+            y='PC2',
+            color=color_column if color_column and color_column in pca_df.columns else None,
+            title=f'PCA Scatter Plot (Explained Variance: {sum(pca.explained_variance_ratio_):.2%})',
+            template=self.theme
+        )
+        
+        fig.update_layout(
+            xaxis_title=f'PC1 ({pca.explained_variance_ratio_[0]:.2%})',
+            yaxis_title=f'PC2 ({pca.explained_variance_ratio_[1]:.2%})'
+        )
+        
+        return fig
+    
+    def _create_class_imbalance(self, target_col: str, y_column=None, color_column=None, **kwargs) -> go.Figure:
+        """Create interactive class imbalance visualization"""
+        if target_col not in self.data.columns:
+            raise ValueError(f"Column '{target_col}' not found")
+        
+        class_counts = self.data[target_col].value_counts()
+        
+        fig = px.bar(
+            x=class_counts.values,
+            y=class_counts.index,
+            orientation='h',
+            title=f'Class Imbalance: {target_col}',
+            template=self.theme,
+            text=class_counts.values
+        )
+        
+        fig.update_layout(
+            xaxis_title='Count',
+            yaxis_title='Classes'
+        )
+        
+        fig.update_traces(texttemplate='%{text}', textposition='outside')
+        
+        return fig
+    
+    def _create_learning_curve(self, target_col: str, y_column=None, color_column=None, **kwargs) -> go.Figure:
+        """Create interactive learning curve plot"""
+        if target_col not in self.data.columns:
+            raise ValueError(f"Column '{target_col}' not found")
+        
+        model = kwargs.get('model')
+        if model is None:
+            # Use a simple dummy model for demonstration
+            from sklearn.ensemble import RandomForestClassifier
+            model = RandomForestClassifier(n_estimators=10, random_state=42)
+        
+        # Prepare features and target
+        feature_cols = [col for col in self.data.columns if col != target_col]
+        X = self.data[feature_cols].select_dtypes(include=[np.number])
+        y = self.data[target_col]
+        
+        # Generate learning curve
+        train_sizes, train_scores, val_scores = learning_curve(
+            model, X, y, cv=5, n_jobs=-1, 
+            train_sizes=np.linspace(0.1, 1.0, 10)
+        )
+        
+        # Calculate means and stds
         train_mean = np.mean(train_scores, axis=1)
         train_std = np.std(train_scores, axis=1)
         val_mean = np.mean(val_scores, axis=1)
         val_std = np.std(val_scores, axis=1)
         
-        plt.plot(train_sizes, train_mean, 'o-', label='Training Score')
-        plt.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, alpha=0.1)
+        fig = go.Figure()
         
-        plt.plot(train_sizes, val_mean, 'o-', label='Validation Score')
-        plt.fill_between(train_sizes, val_mean - val_std, val_mean + val_std, alpha=0.1)
+        # Training scores
+        fig.add_trace(go.Scatter(
+            x=train_sizes,
+            y=train_mean + train_std,
+            mode='lines',
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
         
-        plt.xlabel('Training Set Size')
-        plt.ylabel('Score')
-        plt.title('Learning Curve')
-        plt.legend()
-        plt.grid(True)
+        fig.add_trace(go.Scatter(
+            x=train_sizes,
+            y=train_mean - train_std,
+            mode='lines',
+            line=dict(width=0),
+            fill='tonexty',
+            fillcolor='rgba(0,100,80,0.2)',
+            showlegend=False,
+            hoverinfo='skip'
+        ))
         
-        return self._to_base64()
+        fig.add_trace(go.Scatter(
+            x=train_sizes,
+            y=train_mean,
+            mode='lines+markers',
+            name='Training Score',
+            line=dict(color='rgb(0,100,80)')
+        ))
+        
+        # Validation scores
+        fig.add_trace(go.Scatter(
+            x=train_sizes,
+            y=val_mean + val_std,
+            mode='lines',
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=train_sizes,
+            y=val_mean - val_std,
+            mode='lines',
+            line=dict(width=0),
+            fill='tonexty',
+            fillcolor='rgba(255,65,54,0.2)',
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=train_sizes,
+            y=val_mean,
+            mode='lines+markers',
+            name='Validation Score',
+            line=dict(color='rgb(255,65,54)')
+        ))
+        
+        fig.update_layout(
+            title='Learning Curve',
+            xaxis_title='Training Set Size',
+            yaxis_title='Score',
+            template=self.theme
+        )
+        
+        return fig
+    

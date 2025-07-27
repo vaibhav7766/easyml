@@ -43,15 +43,30 @@ class PreprocessingOption(str, Enum):
 
 class ModelType(str, Enum):
     """Available machine learning models"""
-    LINEAR_REGRESSION = "linear_regression"
+    # Classification Models
     LOGISTIC_REGRESSION = "logistic_regression"
-    RANDOM_FOREST = "random_forest"
-    DECISION_TREE = "decision_tree"
-    SVM = "svm"
-    KNN = "knn"
+    RANDOM_FOREST_CLASSIFIER = "random_forest_classifier"
+    DECISION_TREE_CLASSIFIER = "decision_tree_classifier"
+    SVC = "svc"  # Support Vector Classifier
+    KNN_CLASSIFIER = "knn_classifier"
     NAIVE_BAYES = "naive_bayes"
-    GRADIENT_BOOSTING = "gradient_boosting"
-    NEURAL_NETWORK = "neural_network"
+    GRADIENT_BOOSTING_CLASSIFIER = "gradient_boosting_classifier"
+    MLP_CLASSIFIER = "mlp_classifier"  # Multi-layer Perceptron
+    XGBOOST_CLASSIFIER = "xgboost_classifier"
+    LIGHTGBM_CLASSIFIER = "lightgbm_classifier"
+    
+    # Regression Models
+    LINEAR_REGRESSION = "linear_regression"
+    RANDOM_FOREST_REGRESSOR = "random_forest_regressor"
+    DECISION_TREE_REGRESSOR = "decision_tree_regressor"
+    SVR = "svr"  # Support Vector Regressor
+    KNN_REGRESSOR = "knn_regressor"
+    RIDGE = "ridge"
+    LASSO = "lasso"
+    ELASTIC_NET = "elastic_net"
+    MLP_REGRESSOR = "mlp_regressor"
+    XGBOOST_REGRESSOR = "xgboost_regressor"
+    LIGHTGBM_REGRESSOR = "lightgbm_regressor"
 
 
 class DatasetMode(str, Enum):

@@ -49,6 +49,20 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+
+# Application-specific
+uploads/*.csv
+uploads/*.json
+!uploads/.gitkeep
+logs/*.log
+mlruns/*/
+!mlruns/.gitkeep
+models/*.pkl
+models/*.joblib
+!models/.gitkeep
+datasets/*.csv
+datasets/*.json
+!datasets/.gitkeep
 cover/
 
 # Translations
@@ -165,3 +179,15 @@ static/
 *.csv
 *.txt
 !requirements.txt
+
+# DVC
+/uploads.dvc
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Model artifacts
+models/
+*.pkl
+*.joblib

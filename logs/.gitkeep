@@ -1,0 +1,4 @@
+# 📁 .gitkeep
+
+This directory stores application logs.
+Log files are generated during runtime and not tracked in git.

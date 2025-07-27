@@ -22,6 +22,24 @@ class Settings(BaseSettings):
     mongo_uri: Optional[str] = None
     database_name: str = "easyml"
     
+    # Enhanced Database Configuration
+    postgres_url: str = "postgresql://easyml_user:easyml_password@localhost:5432/easyml_db"
+    mongo_url: str = "mongodb://localhost:27017"
+    mongo_db_name: str = "easyml"
+    
+    # DVC Configuration
+    dvc_remote_url: Optional[str] = None
+    dvc_remote_name: str = "azure"
+    dvc_azure_connection_string: Optional[str] = None
+    dvc_azure_container_name: Optional[str] = None
+    
+    # Additional Azure settings for container environments
+    azure_storage_account: Optional[str] = None
+    azure_storage_key: Optional[str] = None
+    
+    # MLflow Configuration
+    mlflow_tracking_uri: str = "file:./mlruns"
+    
     # File Storage
     upload_dir: str = "uploads"
     max_upload_size: int = 100 * 1024 * 1024  # 100MB

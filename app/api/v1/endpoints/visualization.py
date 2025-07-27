@@ -53,8 +53,8 @@ async def generate_visualization(request: VisualizationRequest):
     
     return VisualizationResponse(
         success=True,
-        plot_base64=result["plot_base64"],
-        plot_type=request.plot_type.value,
+        plotly_json=result["plotly_json"],
+        plot_type=request.plot_type.value if hasattr(request.plot_type, 'value') else str(request.plot_type),
         columns_used={
             "x_column": request.x_column,
             "y_column": request.y_column,

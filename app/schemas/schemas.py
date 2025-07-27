@@ -106,7 +106,7 @@ class VisualizationRequest(BaseSchema):
 class VisualizationResponse(BaseSchema):
     """Schema for visualization response"""
     success: bool
-    plot_base64: str = Field(..., description="Base64 encoded image")
+    plotly_json: str = Field(..., description="Plotly JSON for interactive charts")
     plot_type: str
     columns_used: Dict[str, Optional[str]]
     plot_info: Dict[str, Any]
@@ -175,6 +175,31 @@ class FeatureSelectionResponse(BaseSchema):
     selected_features: List[str]
     feature_scores: Dict[str, float]
     method_used: str
+
+
+class HyperparameterTuningRequest(BaseSchema):
+    """Schema for hyperparameter tuning request"""
+    file_id: str
+    target_column: str
+    model_type: ModelType
+    param_grid: Dict[str, List[Any]]
+    cv_folds: int = Field(5, ge=3, le=10)
+    scoring: Optional[str] = None
+    session_id: str = "default"
+    preprocessing_operations: Optional[Dict[str, str]] = None
+    is_categorical: bool = False
+
+
+class HyperparameterTuningResponse(BaseSchema):
+    """Schema for hyperparameter tuning response"""
+    success: bool
+    best_params: Dict[str, Any]
+    best_score: float
+    cv_results: Dict[str, Any]
+    model_type: str
+    scoring: str
+    cv_folds: int
+    session_id: str
 
 
 # Dashboard Schemas (Legacy - use individual endpoints)

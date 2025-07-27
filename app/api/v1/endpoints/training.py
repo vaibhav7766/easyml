@@ -1,20 +1,25 @@
 """
-Model training endpoints
+Model training endpoints with DVC integration
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, status
 from typing import Dict, List, Optional, Any
+from sqlalchemy.orm import Session
+from pymongo.database import Database
 
-from app.services.model_training import ModelTrainingService
+from app.services.enhanced_model_training import EnhancedModelTrainingService
 from app.services.file_service import FileService
 from app.services.preprocessing import PreprocessingService
-from app.schemas.schemas import ModelTrainingRequest, ModelTrainingResponse, PredictionRequest, PredictionResponse
+from app.schemas.schemas import ModelTrainingRequest, ModelTrainingResponse, PredictionRequest, PredictionResponse, HyperparameterTuningRequest, HyperparameterTuningResponse
 from app.core.enums import ModelType
+from app.core.auth import get_current_active_user
+from app.core.database import get_session, get_database
+from app.models.sql_models import User, Project
 
 router = APIRouter()
 file_service = FileService()
 
 # Store active training services (in production, use proper session management)
-training_services: Dict[str, ModelTrainingService] = {}
+training_services: Dict[str, EnhancedModelTrainingService] = {}
 
 
 async def get_data_dependency(file_id: str):
@@ -25,18 +30,25 @@ async def get_data_dependency(file_id: str):
     return result["data"]
 
 
-def get_or_create_training_service(session_id: str) -> ModelTrainingService:
+def get_or_create_training_service(session_id: str) -> EnhancedModelTrainingService:
     """Get or create a training service for a session"""
     if session_id not in training_services:
-        training_services[session_id] = ModelTrainingService()
+        training_services[session_id] = EnhancedModelTrainingService()
     return training_services[session_id]
 
 
-@router.post("/train", response_model=ModelTrainingResponse)
-async def train_model(request: ModelTrainingRequest):
+@router.post("/projects/{project_id}/train", response_model=ModelTrainingResponse)
+async def train_model(
+    project_id: str,
+    request: ModelTrainingRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_session),
+    mongo_db: Database = Depends(get_database)
+):
     """
-    Train a machine learning model
+    Train a machine learning model with automatic DVC versioning
     
+    - **project_id**: ID of the project this model belongs to
     - **file_id**: ID of the uploaded data file
     - **target_column**: Name of the target/label column
     - **model_type**: Type of ML model to train
@@ -46,7 +58,21 @@ async def train_model(request: ModelTrainingRequest):
     - **use_cross_validation**: Whether to use cross-validation
     - **cv_folds**: Number of cross-validation folds
     - **session_id**: Session identifier for model management
+    - **auto_version**: Whether to automatically version the model with DVC
     """
+    # Verify user has access to project
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.owner_id == current_user.id,
+        Project.is_active == True
+    ).first()
+    
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found or access denied"
+        )
+    
     # Load data
     data = await get_data_dependency(request.file_id)
     
@@ -66,51 +92,56 @@ async def train_model(request: ModelTrainingRequest):
         
         data = preprocess_service.get_processed_data()
     
-    # Get or create training service
-    training_service = get_or_create_training_service(request.session_id)
+    # Create enhanced training service
+    training_service = EnhancedModelTrainingService()
     
-    # Train model
-    result = training_service.train_model(
+    # Train model with persistence and DVC integration
+    result = await training_service.train_model_with_persistence(
         data=data,
         target_column=request.target_column,
         model_type=request.model_type,
         test_size=request.test_size,
         hyperparameters=request.hyperparameters,
         use_cross_validation=request.use_cross_validation,
-        cv_folds=request.cv_folds
+        cv_folds=request.cv_folds,
+        user_id=str(current_user.id),
+        project_id=project_id,
+        db_session=db,
+        mongo_db=mongo_db,
+        auto_version=getattr(request, 'auto_version', True)  # Default to True for automatic versioning
     )
     
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     
+    # Construct train and test metrics dictionaries
+    train_metrics = {}
+    test_metrics = {}
+    
+    for key, value in result.items():
+        if key.startswith("train_"):
+            train_metrics[key.replace("train_", "")] = value
+        elif key.startswith("test_"):
+            test_metrics[key.replace("test_", "")] = value
+    
     return ModelTrainingResponse(
         success=True,
         model_type=result["model_type"],
         is_classifier=result["is_classifier"],
-        train_metrics=result["train_metrics"],
-        test_metrics=result["test_metrics"],
+        train_metrics=train_metrics,
+        test_metrics=test_metrics,
         cv_scores=result.get("cv_scores"),
         cv_mean=result.get("cv_mean"),
         cv_std=result.get("cv_std"),
-        feature_importance=result.get("feature_importance"),
+        feature_importance=result.get("feature_importance", {}),
         hyperparameters=result["hyperparameters"],
-        data_shape=result["data_shape"],
+        data_shape=(result["n_samples"], result["n_features"]),
         session_id=request.session_id
     )
 
 
-@router.post("/hyperparameter-tuning")
-async def tune_hyperparameters(
-    file_id: str,
-    target_column: str,
-    model_type: ModelType,
-    param_grid: Dict[str, List[Any]],
-    cv_folds: int = 5,
-    scoring: Optional[str] = None,
-    session_id: str = "default",
-    preprocessing_operations: Optional[Dict[str, str]] = None,
-    is_categorical: bool = False
-):
+@router.post("/hyperparameter-tuning", response_model=HyperparameterTuningResponse)
+async def tune_hyperparameters(request: HyperparameterTuningRequest):
     """
     Perform hyperparameter tuning for a model
     
@@ -124,13 +155,13 @@ async def tune_hyperparameters(
     - **preprocessing_operations**: Optional preprocessing operations
     """
     # Load data
-    data = await get_data_dependency(file_id)
+    data = await get_data_dependency(request.file_id)
     
     # Apply preprocessing if specified
-    if preprocessing_operations:
+    if request.preprocessing_operations:
         preprocess_service = PreprocessingService(data)
         preprocess_result = preprocess_service.apply_preprocessing(
-            preprocessing_operations, is_categorical
+            request.preprocessing_operations, request.is_categorical
         )
         
         if preprocess_result["errors"]:
@@ -142,26 +173,26 @@ async def tune_hyperparameters(
         data = preprocess_service.get_processed_data()
     
     # Get or create training service
-    training_service = get_or_create_training_service(session_id)
+    training_service = get_or_create_training_service(request.session_id)
     
     # Perform hyperparameter tuning
     result = training_service.hyperparameter_tuning(
         data=data,
-        target_column=target_column,
-        model_type=model_type,
-        param_grid=param_grid,
-        cv_folds=cv_folds,
-        scoring=scoring
+        target_column=request.target_column,
+        model_type=request.model_type,
+        param_grid=request.param_grid,
+        cv_folds=request.cv_folds,
+        scoring=request.scoring
     )
     
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     
-    return {
-        "success": True,
+    return HyperparameterTuningResponse(
+        success=True,
         **result,
-        "session_id": session_id
-    }
+        session_id=request.session_id
+    )
 
 
 @router.post("/predict", response_model=PredictionResponse)
@@ -256,14 +287,14 @@ async def get_available_models():
             "pros": ["Simple", "Interpretable", "Fast"],
             "cons": ["Assumes linearity", "Sensitive to outliers"]
         },
-        ModelType.RIDGE_REGRESSION: {
+        ModelType.RIDGE: {
             "description": "Linear regression with L2 regularization",
             "type": "regression",
             "hyperparameters": ["alpha", "fit_intercept"],
             "pros": ["Handles multicollinearity", "Reduces overfitting"],
             "cons": ["Biased estimates", "All features retained"]
         },
-        ModelType.LASSO_REGRESSION: {
+        ModelType.LASSO: {
             "description": "Linear regression with L1 regularization",
             "type": "regression", 
             "hyperparameters": ["alpha", "fit_intercept", "max_iter"],
@@ -277,12 +308,54 @@ async def get_available_models():
             "pros": ["Handles nonlinearity", "Feature importance", "Robust"],
             "cons": ["Less interpretable", "Can overfit"]
         },
-        ModelType.GRADIENT_BOOSTING_REGRESSOR: {
-            "description": "Sequential ensemble method",
+        ModelType.DECISION_TREE_REGRESSOR: {
+            "description": "Single decision tree for regression",
             "type": "regression",
-            "hyperparameters": ["n_estimators", "learning_rate", "max_depth"],
-            "pros": ["High accuracy", "Handles mixed data types"],
-            "cons": ["Sensitive to overfitting", "Requires tuning"]
+            "hyperparameters": ["max_depth", "min_samples_split", "min_samples_leaf"],
+            "pros": ["Interpretable", "Handles non-linear relationships", "No preprocessing needed"],
+            "cons": ["Prone to overfitting", "Unstable"]
+        },
+        ModelType.SVR: {
+            "description": "Support Vector Machine for regression",
+            "type": "regression",
+            "hyperparameters": ["C", "kernel", "gamma", "epsilon"],
+            "pros": ["Effective in high dimensions", "Memory efficient", "Versatile"],
+            "cons": ["No probabilistic output", "Sensitive to scaling"]
+        },
+        ModelType.KNN_REGRESSOR: {
+            "description": "K-Nearest Neighbors for regression",
+            "type": "regression",
+            "hyperparameters": ["n_neighbors", "weights", "algorithm"],
+            "pros": ["Simple", "No assumptions about data", "Works with small datasets"],
+            "cons": ["Computationally expensive", "Sensitive to irrelevant features"]
+        },
+        ModelType.ELASTIC_NET: {
+            "description": "Linear regression with L1 and L2 regularization",
+            "type": "regression",
+            "hyperparameters": ["alpha", "l1_ratio", "fit_intercept"],
+            "pros": ["Combines Ridge and Lasso", "Handles correlated features", "Feature selection"],
+            "cons": ["Requires tuning", "Less interpretable than simple linear"]
+        },
+        ModelType.MLP_REGRESSOR: {
+            "description": "Multi-layer Perceptron neural network for regression",
+            "type": "regression",
+            "hyperparameters": ["hidden_layer_sizes", "activation", "solver", "alpha"],
+            "pros": ["Handles non-linear relationships", "Flexible architecture"],
+            "cons": ["Black box", "Requires large datasets", "Sensitive to scaling"]
+        },
+        ModelType.XGBOOST_REGRESSOR: {
+            "description": "Extreme Gradient Boosting for regression",
+            "type": "regression",
+            "hyperparameters": ["n_estimators", "max_depth", "learning_rate", "subsample"],
+            "pros": ["High performance", "Built-in regularization", "Handles missing values"],
+            "cons": ["Many hyperparameters", "Can overfit", "Requires tuning"]
+        },
+        ModelType.LIGHTGBM_REGRESSOR: {
+            "description": "Light Gradient Boosting Machine for regression",
+            "type": "regression",
+            "hyperparameters": ["n_estimators", "max_depth", "learning_rate", "num_leaves"],
+            "pros": ["Fast training", "Low memory usage", "High accuracy"],
+            "cons": ["Can overfit small datasets", "Many hyperparameters"]
         },
         
         # Classification Models
@@ -320,13 +393,48 @@ async def get_available_models():
             "hyperparameters": [],
             "pros": ["Fast", "Good for text data", "Handles missing values"],
             "cons": ["Strong independence assumption", "Can be outperformed"]
+        },
+        ModelType.DECISION_TREE_CLASSIFIER: {
+            "description": "Single decision tree for classification",
+            "type": "classification",
+            "hyperparameters": ["max_depth", "min_samples_split", "min_samples_leaf"],
+            "pros": ["Interpretable", "Handles non-linear relationships", "No preprocessing needed"],
+            "cons": ["Prone to overfitting", "Unstable"]
+        },
+        ModelType.KNN_CLASSIFIER: {
+            "description": "K-Nearest Neighbors for classification",
+            "type": "classification",
+            "hyperparameters": ["n_neighbors", "weights", "algorithm"],
+            "pros": ["Simple", "No assumptions about data", "Works with small datasets"],
+            "cons": ["Computationally expensive", "Sensitive to irrelevant features"]
+        },
+        ModelType.MLP_CLASSIFIER: {
+            "description": "Multi-layer Perceptron neural network for classification",
+            "type": "classification",
+            "hyperparameters": ["hidden_layer_sizes", "activation", "solver", "alpha"],
+            "pros": ["Handles non-linear relationships", "Flexible architecture"],
+            "cons": ["Black box", "Requires large datasets", "Sensitive to scaling"]
+        },
+        ModelType.XGBOOST_CLASSIFIER: {
+            "description": "Extreme Gradient Boosting for classification",
+            "type": "classification",
+            "hyperparameters": ["n_estimators", "max_depth", "learning_rate", "subsample"],
+            "pros": ["High performance", "Built-in regularization", "Handles missing values"],
+            "cons": ["Many hyperparameters", "Can overfit", "Requires tuning"]
+        },
+        ModelType.LIGHTGBM_CLASSIFIER: {
+            "description": "Light Gradient Boosting Machine for classification",
+            "type": "classification",
+            "hyperparameters": ["n_estimators", "max_depth", "learning_rate", "num_leaves"],
+            "pros": ["Fast training", "Low memory usage", "High accuracy"],
+            "cons": ["Can overfit small datasets", "Many hyperparameters"]
         }
     }
     
     return {
         "success": True,
         "models": model_info,
-        "regression_models": [model.value for model in ModelType if "REGRESSOR" in model.name or "REGRESSION" in model.name],
+        "regression_models": [model.value for model in ModelType if "REGRESSOR" in model.name or model.name in ["LINEAR_REGRESSION", "RIDGE", "LASSO", "ELASTIC_NET", "SVR"]],
         "classification_models": [model.value for model in ModelType if "CLASSIFIER" in model.name or model.name in ["LOGISTIC_REGRESSION", "SVC", "NAIVE_BAYES"]]
     }
 
@@ -429,4 +537,33 @@ async def list_training_sessions():
         "success": True,
         "sessions": sessions,
         "total_sessions": len(sessions)
+    }
+
+
+@router.get("/models/available")
+async def get_available_models():
+    """
+    Get list of all available machine learning models
+    """
+    training_service = EnhancedModelTrainingService()
+    models = training_service.get_available_models()
+    
+    return {
+        "success": True,
+        "models": models
+    }
+
+
+@router.get("/models/{model_type}/hyperparameters")
+async def get_model_hyperparameters(model_type: ModelType):
+    """
+    Get default hyperparameters for a specific model type
+    """
+    training_service = EnhancedModelTrainingService()
+    hyperparameters = training_service.get_default_hyperparameters(model_type)
+    
+    return {
+        "success": True,
+        "model_type": model_type.value,
+        "default_hyperparameters": hyperparameters
     }
