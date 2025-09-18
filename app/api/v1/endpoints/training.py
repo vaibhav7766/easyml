@@ -86,7 +86,25 @@ async def train_model(
             detail="Project not found or access denied"
         )
     
-    file_id = db.query(DatasetVersion).filter(DatasetVersion.project_id == project_id).order_by(DatasetVersion.created_at.desc()).first().storage_path
+    # Get the current dataset version for this project
+    current_dataset = db.query(DatasetVersion).filter(
+        DatasetVersion.project_id == project_id,
+        DatasetVersion.is_current == True
+    ).first()
+    
+    if not current_dataset:
+        # Fallback to latest version if no current version is set
+        current_dataset = db.query(DatasetVersion).filter(
+            DatasetVersion.project_id == project_id
+        ).order_by(DatasetVersion.created_at.desc()).first()
+    
+    if not current_dataset:
+        raise HTTPException(
+            status_code=404,
+            detail="No dataset found for this project. Please upload a dataset first."
+        )
+    
+    file_id = current_dataset.storage_path
     print(f"🔍 ENDPOINT DEBUG: Retrieved file_id: {file_id}")
     # Load data
     data = await get_data_dependency(file_id)

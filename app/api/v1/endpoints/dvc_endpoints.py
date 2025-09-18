@@ -47,8 +47,7 @@ async def version_model(
     # Verify user has access to project
     project = db.query(Project).filter(
         Project.id == project_id,
-        Project.owner_id == current_user.id,
-        Project.status == True
+        Project.owner_id == current_user.id
     ).first()
     
     if not project:
@@ -112,8 +111,7 @@ async def version_dataset(
     # Verify user has access to project
     project = db.query(Project).filter(
         Project.id == project_id,
-        Project.owner_id == current_user.id,
-        Project.status == True
+        Project.owner_id == current_user.id
     ).first()
     
     if not project:
@@ -181,8 +179,7 @@ async def get_model_versions(
     # Verify user has access to project
     project = db.query(Project).filter(
         Project.id == project_id,
-        Project.owner_id == current_user.id,
-        Project.status == True
+        Project.owner_id == current_user.id
     ).first()
     
     if not project:
@@ -196,43 +193,8 @@ async def get_model_versions(
     versions = await dvc_service.list_versions(
         user_id=str(current_user.id),
         project_id=project_id,
+        db=db,
         data_type="models"
-    )
-    
-    return VersionListResponse(
-        success=True,
-        versions=versions,
-        total_count=len(versions)
-    )
-
-
-@router.get("/projects/{project_id}/datasets/versions", response_model=VersionListResponse)
-async def get_dataset_versions(
-    project_id: str,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session)
-):
-    """Get all dataset versions for a project"""
-    
-    # Verify user has access to project
-    project = db.query(Project).filter(
-        Project.id == project_id,
-        Project.owner_id == current_user.id,
-        Project.status == True
-    ).first()
-    
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found or access denied"
-        )
-    
-    dvc_service = DVCService()
-    
-    versions = await dvc_service.list_versions(
-        user_id=str(current_user.id),
-        project_id=project_id,
-        data_type="datasets"
     )
     
     return VersionListResponse(
@@ -255,8 +217,7 @@ async def get_model_version(
     # Verify user has access to project
     project = db.query(Project).filter(
         Project.id == project_id,
-        Project.owner_id == current_user.id,
-        Project.status == True
+        Project.owner_id == current_user.id
     ).first()
     
     if not project:
@@ -301,8 +262,7 @@ async def cleanup_old_versions(
     # Verify user has access to project
     project = db.query(Project).filter(
         Project.id == project_id,
-        Project.owner_id == current_user.id,
-        Project.status == True
+        Project.owner_id == current_user.id
     ).first()
     
     if not project:
@@ -316,6 +276,7 @@ async def cleanup_old_versions(
     await dvc_service.cleanup_old_versions(
         user_id=str(current_user.id),
         project_id=project_id,
+        db=db,
         keep_latest=keep_latest
     )
     

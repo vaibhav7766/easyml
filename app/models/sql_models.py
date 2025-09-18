@@ -145,6 +145,7 @@ class DatasetVersion(Base):
     name = Column(String(200), nullable=False)
     version = Column(String(50), nullable=False)
     tag = Column(String(100), nullable=False, default="raw data")  # "raw data" or "preprocessed data"
+    is_current = Column(Boolean, default=False)  # Track the current active version
 
     # Storage information
     storage_path = Column(String(500), nullable=False)

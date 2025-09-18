@@ -403,26 +403,28 @@ class DVCService:
         self,
         user_id: str,
         project_id: str,
-        mongo_db: Database,
+        db: Session,
         data_type: str = "models"
     ) -> List[Dict[str, Any]]:
         """List all versions for a user and project"""
         try:
-            cursor = mongo_db.dvc_metadata.find({
-                "user_id": user_id,
-                "project_id": project_id,
-                "file_type": data_type
-            }).sort("created_at", -1)
+            from app.models.sql_models import DVCMetadata
+            
+            dvc_records = db.query(DVCMetadata).filter(
+                DVCMetadata.user_id == user_id,
+                DVCMetadata.project_id == project_id,
+                DVCMetadata.file_type == data_type
+            ).order_by(DVCMetadata.created_at.desc()).all()
             
             versions = []
-            async for doc in cursor:
+            for record in dvc_records:
                 versions.append({
-                    "file_path": doc["file_path"],
-                    "version": doc["version"],
-                    "size": doc["size"],
-                    "created_at": doc["created_at"],
-                    "tags": doc.get("tags", []),
-                    "custom_metadata": doc.get("custom_metadata", {})
+                    "file_path": record.file_path,
+                    "version": record.version,
+                    "size": record.size,
+                    "created_at": record.created_at,
+                    "tags": record.tags or [],
+                    "custom_metadata": record.custom_metadata or {}
                 })
             
             return versions
@@ -457,13 +459,15 @@ class DVCService:
         self,
         user_id: str,
         project_id: str,
-        mongo_db: Database,
+        db: Session,
         keep_latest: int = 5
     ):
         """Clean up old versions, keeping only the latest N versions"""
         try:
+            from app.models.sql_models import DVCMetadata
+            
             # Get all versions for this user/project
-            versions = await self.list_versions(user_id, project_id, mongo_db)
+            versions = await self.list_versions(user_id, project_id, db)
             
             if len(versions) <= keep_latest:
                 return
@@ -485,12 +489,13 @@ class DVCService:
                 if os.path.exists(dvc_file_path):
                     os.remove(dvc_file_path)
                 
-                # Remove from MongoDB
-                await mongo_db.dvc_metadata.delete_one({
-                    "file_path": file_path,
-                    "user_id": user_id,
-                    "project_id": project_id
-                })
+                # Remove from PostgreSQL
+                db.query(DVCMetadata).filter(
+                    DVCMetadata.file_path == file_path,
+                    DVCMetadata.user_id == user_id,
+                    DVCMetadata.project_id == project_id
+                ).delete()
+                db.commit()
             
             print(f"✅ Cleaned up {len(versions_to_remove)} old versions")
             

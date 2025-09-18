@@ -141,6 +141,24 @@ class DatasetVersionListResponse(BaseSchema):
     total_versions: int
 
 
+class CurrentDatasetVersionResponse(BaseSchema):
+    """Schema for current dataset version response"""
+    success: bool
+    current_version: DatasetVersionResponse
+
+
+class SetCurrentVersionRequest(BaseSchema):
+    """Schema for setting current version request"""
+    version_id: str
+
+
+class SetCurrentVersionResponse(BaseSchema):
+    """Schema for setting current version response"""
+    success: bool
+    message: str
+    current_version: DatasetVersionResponse
+
+
 # Visualization Schemas
 class VisualizationRequest(BaseSchema):
     """Schema for visualization request"""
