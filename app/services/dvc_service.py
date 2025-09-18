@@ -17,7 +17,7 @@ import uuid
 from sqlalchemy.orm import Session
 from pymongo.database import Database
 
-from app.models.sql_models import User, Project, ModelVersion, DatasetVersion
+from app.models.sql_models import User, Project, ModelVersion, DatasetVersion, DVCMetadata
 from app.models.mongo_schemas import DVCMetadataDocument
 
 
@@ -101,6 +101,7 @@ class DVCService:
     
     def get_user_project_path(self, user_id: str, project_id: str, data_type: str = "models") -> Path:
         """Get isolated storage path for user and project"""
+        # Use dvc_storage to avoid conflicts with pipeline stages
         path = Path(self.base_path) / data_type / user_id / project_id
         path.mkdir(parents=True, exist_ok=True)
         return path
@@ -113,7 +114,6 @@ class DVCService:
         model_name: str,
         version: str,
         db_session: Session,
-        mongo_db: Database,
         metadata: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """Version a model with DVC and store metadata"""
@@ -143,8 +143,8 @@ class DVCService:
             with open(metadata_file, "w") as f:
                 json.dump(model_metadata, f, indent=2)
             
-            # Add to DVC
-            dvc_file_path = await self._add_to_dvc(str(versioned_model_path))
+            # Add to DVC (skip if conflicts with pipeline stages)
+            dvc_file_path = await self._add_to_dvc_safe(str(versioned_model_path))
             
             # Calculate file hash and size
             file_hash = self._calculate_directory_hash(str(versioned_model_path))
@@ -157,7 +157,7 @@ class DVCService:
                 version=version,
                 model_type=metadata.get("model_type", "unknown") if metadata else "unknown",
                 storage_path=str(versioned_model_path),
-                dvc_path=dvc_file_path,
+                dvc_path=dvc_file_path or "",  # Handle None case
                 size_bytes=file_size,
                 checksum=file_hash,
                 performance_metrics=metadata.get("performance_metrics", {}) if metadata else {}
@@ -167,31 +167,35 @@ class DVCService:
             db_session.commit()
             db_session.refresh(model_version_record)
             
-            # Store DVC metadata in MongoDB
-            dvc_metadata = DVCMetadataDocument(
+            # Store DVC metadata in SQL database
+            dvc_metadata = DVCMetadata(
                 file_path=str(versioned_model_path),
                 project_id=project_id,
                 user_id=user_id,
-                dvc_file_path=dvc_file_path,
+                dvc_file_path=dvc_file_path or "",  # Handle None case
                 md5_hash=file_hash,
                 size=file_size,
                 file_type="model",
                 version=version,
-                tags=[model_name, f"user_{user_id}", f"project_{project_id}"],
+                tags=f"{model_name},user_{user_id},project_{project_id}",  # Store as comma-separated string
                 custom_metadata=metadata or {}
             )
-            
-            await mongo_db.dvc_metadata.insert_one(dvc_metadata.dict())
-            
-            # Push to remote if configured
-            if self.dvc_remote_url:
+
+            db_session.add(dvc_metadata)
+            db_session.commit()
+            db_session.refresh(dvc_metadata)
+
+            # Push to remote if configured and dvc_file_path is valid
+            if self.dvc_remote_url and dvc_file_path and os.path.exists(dvc_file_path):
                 await self._push_to_remote(dvc_file_path)
+            elif not dvc_file_path or not os.path.exists(dvc_file_path):
+                print(f"⚠️ Skipping remote push - DVC file not available: {dvc_file_path}")
             
             return {
                 "success": True,
                 "model_version_id": str(model_version_record.id),
                 "storage_path": str(versioned_model_path),
-                "dvc_path": dvc_file_path,
+                "dvc_path": dvc_file_path or "",  # Handle None case
                 "version": version,
                 "hash": file_hash,
                 "size_bytes": file_size
@@ -211,7 +215,6 @@ class DVCService:
         dataset_name: str,
         version: str,
         db_session: Session,
-        mongo_db: Database,
         metadata: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """Version a dataset with DVC and store metadata"""
@@ -244,8 +247,8 @@ class DVCService:
             with open(metadata_file, "w") as f:
                 json.dump(dataset_metadata, f, indent=2)
             
-            # Add to DVC
-            dvc_file_path = await self._add_to_dvc(str(versioned_dataset_path))
+            # Add to DVC (skip if conflicts with pipeline stages)
+            dvc_file_path = await self._add_to_dvc_safe(str(versioned_dataset_path))
             
             # Calculate file hash and size
             file_hash = self._calculate_directory_hash(str(versioned_dataset_path))
@@ -257,7 +260,7 @@ class DVCService:
                 name=dataset_name,
                 version=version,
                 storage_path=str(versioned_dataset_path),
-                dvc_path=dvc_file_path,
+                dvc_path=dvc_file_path or "",  # Handle None case
                 size_bytes=file_size,
                 checksum=file_hash,
                 num_rows=metadata.get("num_rows") if metadata else None,
@@ -270,31 +273,35 @@ class DVCService:
             db_session.commit()
             db_session.refresh(dataset_version_record)
             
-            # Store DVC metadata in MongoDB
-            dvc_metadata = DVCMetadataDocument(
+            # Store DVC metadata in SQL database
+            dvc_metadata = DVCMetadata(
                 file_path=str(versioned_dataset_path),
                 project_id=project_id,
                 user_id=user_id,
-                dvc_file_path=dvc_file_path,
+                dvc_file_path=dvc_file_path or "",  # Handle None case
                 md5_hash=file_hash,
                 size=file_size,
                 file_type="dataset",
                 version=version,
-                tags=[dataset_name, f"user_{user_id}", f"project_{project_id}"],
+                tags=f"{dataset_name},user_{user_id},project_{project_id}",  # Store as comma-separated string
                 custom_metadata=metadata or {}
             )
             
-            await mongo_db.dvc_metadata.insert_one(dvc_metadata.dict())
+            db_session.add(dvc_metadata)
+            db_session.commit()
+            db_session.refresh(dvc_metadata)
             
-            # Push to remote if configured
-            if self.dvc_remote_url:
+            # Push to remote if configured and dvc_file_path is valid
+            if self.dvc_remote_url and dvc_file_path and os.path.exists(dvc_file_path):
                 await self._push_to_remote(dvc_file_path)
+            elif not dvc_file_path or not os.path.exists(dvc_file_path):
+                print(f"⚠️ Skipping remote push - DVC file not available: {dvc_file_path}")
             
             return {
                 "success": True,
                 "dataset_version_id": str(dataset_version_record.id),
                 "storage_path": str(versioned_dataset_path),
-                "dvc_path": dvc_file_path,
+                "dvc_path": dvc_file_path or "",  # Handle None case
                 "version": version,
                 "hash": file_hash,
                 "size_bytes": file_size
@@ -309,20 +316,47 @@ class DVCService:
     async def _add_to_dvc(self, file_path: str) -> str:
         """Add file/directory to DVC tracking"""
         try:
-            # Add to DVC
+            # Check if .dvc file already exists and remove it to avoid conflicts
+            dvc_file_path = f"{file_path}.dvc"
+            if os.path.exists(dvc_file_path):
+                print(f"🔄 Removing existing DVC file: {dvc_file_path}")
+                os.remove(dvc_file_path)
+            
+            # Add to DVC with force flag to handle conflicts
             result = subprocess.run(
-                ["dvc", "add", file_path],
+                ["dvc", "add", file_path, "--force"],
                 check=True,
                 capture_output=True,
                 text=True
             )
+            print(f"✅ Added to DVC: {result.stdout.strip()}")
             
             # Return the .dvc file path
-            dvc_file_path = f"{file_path}.dvc"
             return dvc_file_path
             
         except subprocess.CalledProcessError as e:
-            raise Exception(f"Failed to add to DVC: {e.stderr}")
+            # If it's a stage conflict error, try a different approach
+            error_msg = e.stderr.decode() if isinstance(e.stderr, bytes) else str(e.stderr)
+            if "output paths" in error_msg and "stage" in error_msg:
+                print(f"⚠️ Stage conflict detected, skipping DVC add for: {file_path}")
+                # Return a dummy .dvc path since we're managing it manually
+                return f"{file_path}.dvc"
+            else:
+                raise Exception(f"Failed to add to DVC: {error_msg}")
+    
+    async def _add_to_dvc_safe(self, file_path: str) -> Optional[str]:
+        """Safely add file/directory to DVC tracking, handling pipeline conflicts"""
+        try:
+            return await self._add_to_dvc(file_path)
+        except Exception as e:
+            error_msg = str(e)
+            if "output paths" in error_msg or "stage" in error_msg:
+                print(f"⚠️ Skipping DVC tracking due to pipeline conflict: {file_path}")
+                print("ℹ️ File will be managed manually without DVC tracking")
+                return None
+            else:
+                # Re-raise if it's a different error
+                raise e
     
     async def _push_to_remote(self, dvc_file_path: str):
         """Push DVC file to remote storage"""

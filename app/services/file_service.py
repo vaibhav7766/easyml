@@ -80,7 +80,7 @@ class FileService:
                 "error": str(e)
             }
     
-    async def load_data(self, file_id: str, project_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+    async def load_data(self, file_path: str, **kwargs) -> Dict[str, Any]:
         """
         Load data from uploaded file
         
@@ -94,33 +94,23 @@ class FileService:
         """
         try:
             # Try project-specific path first, then fall back to general upload dir
-            file_path = None
-            if project_id:
-                project_file_path = self.upload_dir / project_id / file_id
-                if project_file_path.exists():
-                    file_path = project_file_path
-            
-            if not file_path:
-                general_file_path = self.upload_dir / file_id
-                if general_file_path.exists():
-                    file_path = general_file_path
             
             if not file_path:
                 return {
                     "success": False,
-                    "error": f"File {file_id} not found"
+                    "error": f"File not found"
                 }
             
             # Determine file type and load accordingly
-            file_extension = file_path.suffix.lower()
+            file_extension = file_path.split('.')[-1].lower()
             
-            if file_extension == '.csv':
+            if file_extension == 'csv':
                 data = pd.read_csv(file_path, **kwargs)
-            elif file_extension in ['.xlsx', '.xls']:
+            elif file_extension in ['xlsx', 'xls']:
                 data = pd.read_excel(file_path, **kwargs)
-            elif file_extension == '.json':
+            elif file_extension == 'json':
                 data = pd.read_json(file_path, **kwargs)
-            elif file_extension == '.parquet':
+            elif file_extension == 'parquet':
                 data = pd.read_parquet(file_path, **kwargs)
             else:
                 return {
@@ -135,7 +125,6 @@ class FileService:
                 "success": True,
                 "data": data,
                 "data_summary": data_summary,
-                "file_id": file_id,
                 "shape": data.shape
             }
             
@@ -143,7 +132,6 @@ class FileService:
             return {
                 "success": False,
                 "error": str(e),
-                "file_id": file_id
             }
     
     async def get_data_preview(self, file_id: str, n_rows: int = 5, project_id: Optional[str] = None) -> Dict[str, Any]:

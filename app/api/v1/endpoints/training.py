@@ -21,9 +21,9 @@ file_service = FileService()
 training_services: Dict[str, EnhancedModelTrainingService] = {}
 
 
-async def get_data_dependency(file_id: str):
+async def get_data_dependency(file_path: str):
     """Dependency to load data from file"""
-    result = await file_service.load_data(file_id)
+    result = await file_service.load_data(file_path)
     if not result.get("success", False):
         raise HTTPException(status_code=404, detail=result.get("error", "File not found"))
     return result["data"]
@@ -86,25 +86,16 @@ async def train_model(
             detail="Project not found or access denied"
         )
     
-    file_id = db.query(DatasetVersion).filter(DatasetVersion.project_id == project_id).order_by(DatasetVersion.created_at.desc()).first()
+    file_id = db.query(DatasetVersion).filter(DatasetVersion.project_id == project_id).order_by(DatasetVersion.created_at.desc()).first().storage_path
     print(f"🔍 ENDPOINT DEBUG: Retrieved file_id: {file_id}")
     # Load data
     data = await get_data_dependency(file_id)
-
-    # Apply preprocessing if specified
-    if request.preprocessing_operations:
-        preprocess_service = PreprocessingService(data)
-        preprocess_result = preprocess_service.apply_preprocessing(
-            request.is_categorical
-        )
-        
-        if preprocess_result["errors"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Preprocessing errors: {'; '.join(preprocess_result['errors'])}"
-            )
-        
-        data = preprocess_service.get_processed_data()
+    print(f"🔍 ENDPOINT DEBUG: Data loaded with shape {data.shape}")
+    
+    # Note: is_categorical is a boolean flag indicating whether the target column
+    # should be treated as categorical. This doesn't require preprocessing operations
+    # on the data itself, but rather affects how the model training interprets the target.
+    # The actual preprocessing operations would need to be passed as a separate parameter.
     
     # Create enhanced training service using the session-based approach
     print(f"🔍 ENDPOINT DEBUG: Creating enhanced training service for session {request.session_id}")

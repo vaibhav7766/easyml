@@ -20,7 +20,7 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
     
     def __init__(
         self, 
-        session_id: str,
+        session_id: Optional[str] = None,
         user: Optional[User] = None,
         project: Optional[Project] = None,
         db_session: Optional[Session] = None
