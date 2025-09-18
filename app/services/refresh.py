@@ -1,6 +1,7 @@
 # app/core/refresh_service.py
 
-from datetime import datetime
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 from app.models.sql_models import RefreshToken, User
 from app.utils.token_utils import generate_refresh_token_string, hash_token, refresh_token_expiry
@@ -47,7 +48,7 @@ class RefreshTokenService:
             return None
         if rt.revoked:
             return None
-        if rt.expires_at < datetime.utcnow():
+        if rt.expires_at < datetime.utcnow().replace(tzinfo=timezone.utc):
             return None
 
         # rotate: issue new token, mark old revoked and link

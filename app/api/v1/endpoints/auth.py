@@ -10,6 +10,7 @@ from app.core.auth import (
     AuthService,
     UserService,
     get_current_active_user,
+    get_current_user,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from app.core.database import get_db
@@ -25,6 +26,10 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: Optional[str] = None
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 class UserResponse(BaseModel):
@@ -87,6 +92,9 @@ class PasswordResetRequest(BaseModel):
 class PasswordResetConfirm(BaseModel):
     token: str
     new_password: str
+    
+class LogoutRequest(BaseModel):
+    refresh_token: str
 
 
 # ---------- Existing endpoints (small improvements) ----------
@@ -137,29 +145,46 @@ async def login(
         user=UserResponse.from_orm(user),
     )
 
-@router.post("/refresh", response_model=TokenRefreshResponse)
-async def refresh_token(req: TokenRefreshRequest):
-    """
-    Exchange a refresh token for a new access token.
-    Requires AuthService.verify_refresh_token() implementation.
-    """
-    payload = AuthService.verify_refresh_token(req.refresh_token)
-    if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+# @router.post("/refresh", response_model=TokenRefreshResponse)
+# async def refresh_token(req: TokenRefreshRequest):
+#     """
+#     Exchange a refresh token for a new access token.
+#     Requires AuthService.verify_refresh_token() implementation.
+#     """
+#     payload = AuthService.verify_refresh_token(req.refresh_token)
+#     if not payload:
+#         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-    username = payload.get("sub") or payload.get("username") or payload.get("user")
-    access_token = AuthService.create_access_token(data={"sub": username}, expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    return TokenRefreshResponse(access_token=access_token)
+#     userid = payload.get("sub") or payload.get("username") or payload.get("user")
+#     access_token = AuthService.create_access_token(data={"sub": userid}, expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+#     return TokenRefreshResponse(access_token=access_token)
 
+@router.post("/refresh")
+def refresh_tokens(request: RefreshRequest, db: Session = Depends(get_db)):
+    payload = AuthService.rotate_refresh_token(db, request.refresh_token)
+    if payload is None:
+        raise HTTPException(401, "Invalid or revoked refresh token")
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(current_user: User = Depends(get_current_active_user)):
-    """
-    Revoke refresh tokens or mark token as revoked.
-    Requires AuthService.revoke_refresh_tokens(user_id) or similar.
-    """
-    AuthService.revoke_refresh_tokens(user_id=current_user.id)
-    return None
+    user, new_refresh_plain = payload
+    access_token = AuthService.create_access_token(subject=str(user.id))
+    # Return new pair
+    return {
+    "access_token": access_token,
+    "token_type": "bearer",
+    "refresh_token": new_refresh_plain
+    }
+
+@router.post("/logout")
+def logout(request: LogoutRequest, db: Session = Depends(get_db)):
+    success = AuthService.revoke_refresh_token(db, request.refresh_token)
+    if not success:
+        raise HTTPException(status_code=400, detail="Invalid refresh token")
+    return {"msg": "Logged out"}
+
+@router.post("/logout-all")
+def logout_all(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    count = AuthService.revoke_all_user_refresh_tokens(db, user)
+    return {"msg": f"Revoked {count} tokens"}
 
 # --- refresh endpoint ---
 @router.post("/refresh", response_model=RefreshResponse)
