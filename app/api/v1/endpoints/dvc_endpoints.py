@@ -48,7 +48,7 @@ async def version_model(
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id,
-        Project.is_active == True
+        Project.status == True
     ).first()
     
     if not project:
@@ -113,7 +113,7 @@ async def version_dataset(
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id,
-        Project.is_active == True
+        Project.status == True
     ).first()
     
     if not project:
@@ -182,7 +182,7 @@ async def get_model_versions(
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id,
-        Project.is_active == True
+        Project.status == True
     ).first()
     
     if not project:
@@ -218,7 +218,7 @@ async def get_dataset_versions(
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id,
-        Project.is_active == True
+        Project.status == True
     ).first()
     
     if not project:
@@ -256,7 +256,7 @@ async def get_model_version(
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id,
-        Project.is_active == True
+        Project.status == True
     ).first()
     
     if not project:
@@ -302,7 +302,7 @@ async def cleanup_old_versions(
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id,
-        Project.is_active == True
+        Project.status == True
     ).first()
     
     if not project:

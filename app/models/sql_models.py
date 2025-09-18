@@ -144,6 +144,7 @@ class DatasetVersion(Base):
     # Dataset identification
     name = Column(String(200), nullable=False)
     version = Column(String(50), nullable=False)
+    tag = Column(String(100), nullable=False, default="raw data")  # "raw data" or "preprocessed data"
 
     # Storage information
     storage_path = Column(String(500), nullable=False)

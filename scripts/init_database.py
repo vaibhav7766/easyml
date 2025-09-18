@@ -202,7 +202,6 @@ async def create_default_admin_user():
                     username="admin",
                     email="admin@easyml.com",
                     hashed_password=get_password_hash("admin123"),
-                    is_active=True,
                     is_superuser=True
                 )
                 

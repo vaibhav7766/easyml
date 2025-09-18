@@ -112,6 +112,33 @@ class PreprocessingResponse(BaseSchema):
     columns_before: List[str]
     columns_after: List[str]
     data_summary: Dict[str, Any]
+    message: Optional[str] = None
+    dataset_version: Optional[str] = None
+    dataset_tag: Optional[str] = None
+
+
+class DatasetVersionResponse(BaseSchema):
+    """Schema for dataset version information"""
+    id: str
+    name: str
+    version: str
+    tag: str
+    storage_path: str
+    size_bytes: Optional[int] = None
+    num_rows: Optional[int] = None
+    num_columns: Optional[int] = None
+    created_at: Optional[datetime] = None
+    schema_info: Optional[Dict[str, Any]] = None
+    statistics: Optional[Dict[str, Any]] = None
+
+
+class DatasetVersionListResponse(BaseSchema):
+    """Schema for dataset version list response"""
+    success: bool
+    project_id: str
+    dataset_name: Optional[str] = None
+    versions: List[DatasetVersionResponse]
+    total_versions: int
 
 
 # Visualization Schemas
