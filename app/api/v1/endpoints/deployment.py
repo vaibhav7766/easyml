@@ -333,7 +333,6 @@ async def scale_deployment(
             detail=f"Failed to scale deployment: {str(e)}"
         )
 
-
 @router.get("/config-template", response_model=DeploymentConfig)
 async def get_deployment_config_template():
     """

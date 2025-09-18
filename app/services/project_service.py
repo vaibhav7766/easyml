@@ -93,7 +93,7 @@ class ProjectService:
         """Get all projects for a user"""
         return db.query(Project).filter(
             Project.owner_id == user.id,
-            Project.is_active == True
+
         ).all()
     
     async def get_project_by_id(

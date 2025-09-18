@@ -12,7 +12,7 @@ from app.schemas.schemas import ModelTrainingRequest, ModelTrainingResponse, Pre
 from app.core.enums import ModelType
 from app.core.auth import get_current_active_user
 from app.core.database import get_db
-from app.models.sql_models import User, Project
+from app.models.sql_models import User, Project,DatasetVersion
 
 router = APIRouter()
 file_service = FileService()
@@ -78,7 +78,6 @@ async def train_model(
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id,
-        Project.is_active == True
     ).first()
     
     if not project:
@@ -87,14 +86,15 @@ async def train_model(
             detail="Project not found or access denied"
         )
     
+    file_id = db.query(DatasetVersion).filter(DatasetVersion.project_id == project_id).order_by(DatasetVersion.created_at.desc()).first()
+    print(f"🔍 ENDPOINT DEBUG: Retrieved file_id: {file_id}")
     # Load data
-    data = await get_data_dependency(request.file_id)
-    
+    data = await get_data_dependency(file_id)
+
     # Apply preprocessing if specified
     if request.preprocessing_operations:
         preprocess_service = PreprocessingService(data)
         preprocess_result = preprocess_service.apply_preprocessing(
-            request.preprocessing_operations,
             request.is_categorical
         )
         

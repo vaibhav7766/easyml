@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from uuid import UUID
+from fastapi import HTTPException, status
 
 from app.core.auth import get_current_active_user
 from app.core.database import get_db
@@ -15,6 +17,15 @@ from app.schemas.schemas import ProjectResponse, ProjectCreate as ProjectCreateS
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
+
+def parse_uuid(id_str: str) -> UUID:
+    try:
+        return UUID(id_str)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not Found"
+        )
 
 class ProjectCreateAPI(BaseModel):
     name: str
@@ -31,6 +42,19 @@ class ProjectDetailResponse(BaseModel):
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+
+# class ProjectResponse(BaseModel):
+#     id: str
+#     name: str
+#     description: Optional[str]
+#     owner_id: str
+#     status: str  # NEW instead of status
+#     created_at: datetime
+#     updated_at: datetime
+
+#     class Config:
+#         orm_mode = True
+
 
 
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -56,7 +80,7 @@ async def create_project(
         name=project.name,
         description=project.description,
         owner_id=str(project.owner_id),
-        is_active=project.is_active,
+        status=project.status,
         created_at=project.created_at,
         updated_at=project.updated_at
     )
@@ -80,7 +104,7 @@ async def get_user_projects(
         "name": project.name,
         "description": project.description,
         "owner_id": str(project.owner_id),
-        "is_active": project.is_active,
+        "status": project.status,
         "created_at": project.created_at,
         "updated_at": project.updated_at
     }) for project in projects]
@@ -88,12 +112,14 @@ async def get_user_projects(
 
 @router.get("/{project_id}", response_model=ProjectDetailResponse)
 async def get_project(
-    project_id: str,
+    project_id:str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get project details"""
     project_service = ProjectService()
+    
+    project_id = parse_uuid(project_id)
     
     project_data = await project_service.get_project_by_id(
         db=db,
@@ -113,7 +139,7 @@ async def get_project(
             "name": project_data["project"].name,
             "description": project_data["project"].description,
             "owner_id": str(project_data["project"].owner_id),
-            "is_active": project_data["project"].is_active,
+            "status": project_data["project"].status,
             "created_at": project_data["project"].created_at,
             "updated_at": project_data["project"].updated_at
         }),
@@ -124,13 +150,15 @@ async def get_project(
 
 @router.put("/{project_id}", response_model=ProjectResponse)
 async def update_project(
-    project_id: str,
+    project_id:str,
     project_update: ProjectUpdate,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Update project"""
     project_service = ProjectService()
+    
+    project_id = parse_uuid(project_id)
     
     updates = project_update.dict(exclude_unset=True)
     
@@ -152,12 +180,14 @@ async def update_project(
 
 @router.delete("/{project_id}")
 async def delete_project(
-    project_id: str,
+    project_id:str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete project"""
     project_service = ProjectService()
+    
+    project_id = parse_uuid(project_id)
     
     success = await project_service.delete_project(
         db=db,
@@ -176,12 +206,14 @@ async def delete_project(
 
 @router.get("/{project_id}/models-path")
 async def get_project_models_path(
-    project_id: str,
+    project_id:str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get project models storage path"""
-    # Verify user has access to project
+    project_id = parse_uuid(project_id)
+    
+    # Verify user has access to project\
     project = db.query(Project).filter(
         Project.id == project_id,
         Project.owner_id == current_user.id

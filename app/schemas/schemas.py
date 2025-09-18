@@ -29,7 +29,7 @@ class ProjectResponse(BaseSchema):
     name: str
     description: Optional[str] = None
     owner_id: str  # Match the actual Project model field
-    is_active: bool = True
+    status: str = "ongoing"
     created_at: datetime
     updated_at: Optional[datetime] = None
     
@@ -137,15 +137,13 @@ class VisualizationResponse(BaseSchema):
 # Model Training Schemas
 class ModelTrainingRequest(BaseSchema):
     """Schema for model training request"""
-    file_id: str
     target_column: str
     model_type: ModelType
     test_size: float = Field(0.2, ge=0.1, le=0.5)
-    preprocessing_operations: Optional[Dict[str, str]] = None
     is_categorical: bool = False
     hyperparameters: Optional[Dict[str, Any]] = None
     use_cross_validation: bool = True
-    cv_folds: int = Field(5, ge=3, le=10)
+    cv_folds: int = Field(1, ge=1, le=10)
     session_id: str = "default"
 
 
