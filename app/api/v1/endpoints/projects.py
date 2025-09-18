@@ -9,29 +9,18 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from app.core.auth import get_current_active_user
-from app.core.database import get_session, get_database
+from app.core.database import get_db, get_database
 from app.models.sql_models import User, Project
 from app.services.project_service import ProjectService
+from app.schemas.schemas import ProjectResponse, ProjectCreate as ProjectCreateSchema
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-class ProjectCreate(BaseModel):
+class ProjectCreateAPI(BaseModel):
     name: str
     description: Optional[str] = None
     mlflow_experiment_name: Optional[str] = None
-
-
-class ProjectResponse(BaseModel):
-    id: str
-    name: str
-    description: Optional[str]
-    is_active: bool
-    created_at: datetime
-    updated_at: Optional[datetime]
-    
-    class Config:
-        from_attributes = True
 
 
 class ProjectDetailResponse(BaseModel):
@@ -45,15 +34,19 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
 
 
-@router.post("/", response_model=ProjectResponse)
+@router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
-    project_data: ProjectCreate,
+    project_data: ProjectCreateAPI,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session),
-    mongo_db: Database = Depends(get_database)
+    db: Session = Depends(get_db),
+    mongo_db: Optional[Database] = Depends(get_database)
 ):
     """Create a new project"""
     project_service = ProjectService()
+    
+    # Handle MongoDB unavailability gracefully
+    if mongo_db is None:
+        print("⚠️  Warning: MongoDB unavailable, creating project with PostgreSQL only")
     
     project = await project_service.create_project(
         db=db,
@@ -64,13 +57,22 @@ async def create_project(
         mlflow_experiment_name=project_data.mlflow_experiment_name
     )
     
-    return ProjectResponse.from_orm(project)
+    # Convert to response model manually with proper UUID handling
+    return ProjectResponse(
+        id=str(project.id),
+        name=project.name,
+        description=project.description,
+        owner_id=str(project.owner_id),
+        is_active=project.is_active,
+        created_at=project.created_at,
+        updated_at=project.updated_at
+    )
 
 
 @router.get("/", response_model=List[ProjectResponse])
 async def get_user_projects(
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """Get all projects for the current user"""
     project_service = ProjectService()
@@ -80,14 +82,22 @@ async def get_user_projects(
         user=current_user
     )
     
-    return [ProjectResponse.from_orm(project) for project in projects]
+    return [ProjectResponse(**{
+        "id": str(project.id),
+        "name": project.name,
+        "description": project.description,
+        "owner_id": str(project.owner_id),
+        "is_active": project.is_active,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at
+    }) for project in projects]
 
 
 @router.get("/{project_id}", response_model=ProjectDetailResponse)
 async def get_project(
     project_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_db),
     mongo_db: Database = Depends(get_database)
 ):
     """Get project details"""
@@ -107,7 +117,15 @@ async def get_project(
         )
     
     return ProjectDetailResponse(
-        project=ProjectResponse.from_orm(project_data["project"]),
+        project=ProjectResponse(**{
+            "id": str(project_data["project"].id),
+            "name": project_data["project"].name,
+            "description": project_data["project"].description,
+            "owner_id": str(project_data["project"].owner_id),
+            "is_active": project_data["project"].is_active,
+            "created_at": project_data["project"].created_at,
+            "updated_at": project_data["project"].updated_at
+        }),
         config=project_data["config"],
         stats=project_data["stats"]
     )
@@ -118,7 +136,7 @@ async def update_project(
     project_id: str,
     project_update: ProjectUpdate,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_db),
     mongo_db: Database = Depends(get_database)
 ):
     """Update project"""
@@ -147,7 +165,7 @@ async def update_project(
 async def delete_project(
     project_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_db),
     mongo_db: Database = Depends(get_database)
 ):
     """Delete project"""
@@ -173,7 +191,7 @@ async def delete_project(
 async def get_project_models_path(
     project_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session)
+    db: Session = Depends(get_db)
 ):
     """Get project models storage path"""
     # Verify user has access to project

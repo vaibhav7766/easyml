@@ -12,7 +12,7 @@ from app.services.preprocessing import PreprocessingService
 from app.schemas.schemas import ModelTrainingRequest, ModelTrainingResponse, PredictionRequest, PredictionResponse, HyperparameterTuningRequest, HyperparameterTuningResponse
 from app.core.enums import ModelType
 from app.core.auth import get_current_active_user
-from app.core.database import get_session, get_database
+from app.core.database import get_db, get_database
 from app.models.sql_models import User, Project
 
 router = APIRouter()
@@ -30,10 +30,29 @@ async def get_data_dependency(file_id: str):
     return result["data"]
 
 
-def get_or_create_training_service(session_id: str) -> EnhancedModelTrainingService:
+def get_or_create_training_service(
+    session_id: str,
+    user: Optional[User] = None,
+    project: Optional[Project] = None,
+    db_session: Optional[Session] = None,
+    mongo_db: Optional[Database] = None
+) -> EnhancedModelTrainingService:
     """Get or create a training service for a session"""
     if session_id not in training_services:
-        training_services[session_id] = EnhancedModelTrainingService()
+        training_services[session_id] = EnhancedModelTrainingService(
+            session_id=session_id,
+            user=user,
+            project=project,
+            db_session=db_session,
+            mongo_db=mongo_db
+        )
+    else:
+        # Update existing service with current context
+        service = training_services[session_id]
+        service.user = user
+        service.project = project
+        service.db_session = db_session
+        service.mongo_db = mongo_db
     return training_services[session_id]
 
 
@@ -42,7 +61,7 @@ async def train_model(
     project_id: str,
     request: ModelTrainingRequest,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session),
+    db: Session = Depends(get_db),
     mongo_db: Database = Depends(get_database)
 ):
     """
@@ -92,10 +111,19 @@ async def train_model(
         
         data = preprocess_service.get_processed_data()
     
-    # Create enhanced training service
-    training_service = EnhancedModelTrainingService()
+    # Create enhanced training service using the session-based approach
+    print(f"🔍 ENDPOINT DEBUG: Creating enhanced training service for session {request.session_id}")
+    training_service = get_or_create_training_service(
+        session_id=request.session_id,
+        user=current_user,
+        project=project,
+        db_session=db,
+        mongo_db=mongo_db
+    )
+    print(f"🔍 ENDPOINT DEBUG: Service type: {type(training_service)}")
     
     # Train model with persistence and DVC integration
+    print(f"🔍 ENDPOINT DEBUG: Calling train_model_with_persistence...")
     result = await training_service.train_model_with_persistence(
         data=data,
         target_column=request.target_column,
@@ -104,15 +132,13 @@ async def train_model(
         hyperparameters=request.hyperparameters,
         use_cross_validation=request.use_cross_validation,
         cv_folds=request.cv_folds,
-        user_id=str(current_user.id),
-        project_id=project_id,
-        db_session=db,
-        mongo_db=mongo_db,
         auto_version=getattr(request, 'auto_version', True)  # Default to True for automatic versioning
     )
     
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+
+    print(f"🔍 ENDPOINT DEBUG: Training completed! Result keys: {list(result.keys())}")
     
     # Construct train and test metrics dictionaries
     train_metrics = {}

@@ -1,6 +1,6 @@
 """
-Enhanced Database initialization script for EasyML
-Creates all necessary tables, collections, and initial data for hybrid architecture
+Complete Database Initialization Script for EasyML
+Creates all EasyML tables in the correct order with deployment support
 """
 import asyncio
 import os

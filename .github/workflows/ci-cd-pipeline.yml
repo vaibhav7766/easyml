@@ -1,0 +1,273 @@
+name: EasyML CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Test and Lint
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.10]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov black flake8 mypy
+
+    - name: Lint with flake8
+      run: |
+        flake8 app --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 app --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Format check with black
+      run: black --check app
+
+    - name: Type check with mypy
+      run: mypy app --ignore-missing-imports
+
+    - name: Run tests
+      run: |
+        pytest tests/ -v --cov=app --cov-report=xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+
+  # Build and push Docker image
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix=sha-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./scripts/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+
+  # DVC Pipeline - Model Training and Validation
+  dvc-pipeline:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Configure DVC
+      env:
+        DVC_AZURE_CONNECTION_STRING: ${{ secrets.DVC_AZURE_CONNECTION_STRING }}
+      run: |
+        dvc remote modify azure connection_string "$DVC_AZURE_CONNECTION_STRING"
+
+    - name: Pull DVC data
+      run: dvc pull
+
+    - name: Run DVC pipeline
+      run: |
+        dvc repro
+        
+    - name: Generate model report
+      run: |
+        dvc metrics show --json > metrics.json
+        dvc plots show --json > plots.json
+
+    - name: Upload DVC artifacts
+      run: |
+        dvc push
+        git add dvc.lock
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        git commit -m "Update DVC pipeline [skip ci]" || exit 0
+        git push
+
+    - name: Upload model artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: model-artifacts
+        path: |
+          models/
+          metrics.json
+          plots.json
+
+  # Deploy to Azure Container Instances
+  deploy-azure:
+    needs: [build-and-push, dvc-pipeline]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    
+    environment: 
+      name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_environment || 'production' }}
+      url: ${{ steps.deploy.outputs.app-url }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Deploy to Azure Container Instances
+      id: deploy
+      uses: azure/aci-deploy@v1
+      with:
+        resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
+        dns-name-label: easyml-api-${{ github.run_number }}
+        image: ${{ needs.build-and-push.outputs.image-tag }}
+        registry-login-server: ${{ env.REGISTRY }}
+        registry-username: ${{ github.actor }}
+        registry-password: ${{ secrets.GITHUB_TOKEN }}
+        name: easyml-container-${{ github.run_number }}
+        location: 'eastus'
+        cpu: 2
+        memory: 4
+        ports: 8000
+        environment-variables: |
+          ENVIRONMENT=production
+          LOG_LEVEL=INFO
+          AZURE_STORAGE_CONNECTION_STRING=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_CONTAINER_NAME=${{ vars.AZURE_CONTAINER_NAME }}
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+          POSTGRES_URL=${{ secrets.POSTGRES_URL }}
+          MONGO_URL=${{ secrets.MONGO_URL }}
+
+    - name: Test deployment
+      run: |
+        echo "Waiting for container to start..."
+        sleep 60
+        
+        APP_URL="http://${{ steps.deploy.outputs.aci-ip }}:8000"
+        echo "Testing deployment at: $APP_URL"
+        
+        # Test health endpoint
+        if curl -f "$APP_URL/health"; then
+          echo "✅ Health check passed!"
+          echo "app-url=$APP_URL" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Health check failed!"
+          exit 1
+        fi
+
+    - name: Create deployment summary
+      run: |
+        echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: ${{ github.event.inputs.deploy_environment || 'production' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image**: ${{ needs.build-and-push.outputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **URL**: ${{ steps.deploy.outputs.app-url }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **API Docs**: ${{ steps.deploy.outputs.app-url }}/docs" >> $GITHUB_STEP_SUMMARY
+        echo "- **Health Check**: ${{ steps.deploy.outputs.app-url }}/health" >> $GITHUB_STEP_SUMMARY
+
+  # Notify deployment status
+  notify:
+    needs: [deploy-azure]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Deployment Success Notification
+      if: needs.deploy-azure.result == 'success'
+      run: |
+        echo "🎉 EasyML deployed successfully!"
+        echo "API URL: ${{ needs.deploy-azure.outputs.app-url }}"
+        
+    - name: Deployment Failure Notification
+      if: needs.deploy-azure.result == 'failure'
+      run: |
+        echo "❌ EasyML deployment failed!"
+        exit 1

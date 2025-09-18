@@ -2,7 +2,7 @@
 Pydantic schemas for request/response models
 """
 from typing import Optional, Dict, List, Any, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 
 from app.core.enums import PlotType, PreprocessingOption, ModelType, ProjectStatus, TaskType
@@ -25,14 +25,35 @@ class ProjectCreate(BaseSchema):
 
 class ProjectResponse(BaseSchema):
     """Schema for project response"""
-    id: str = Field(..., alias="_id")
+    id: str
     name: str
     description: Optional[str] = None
-    user_id: str
-    status: ProjectStatus
-    file_path: Optional[str] = None
+    owner_id: str  # Match the actual Project model field
+    is_active: bool = True
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    @model_validator(mode='before')
+    @classmethod
+    def convert_uuids(cls, data):
+        """Convert UUID objects to strings"""
+        import uuid
+        if hasattr(data, '__dict__'):
+            # Handle SQLAlchemy model objects
+            data_dict = {}
+            for key, value in data.__dict__.items():
+                if isinstance(value, uuid.UUID):
+                    data_dict[key] = str(value)
+                else:
+                    data_dict[key] = value
+            return data_dict
+        elif isinstance(data, dict):
+            # Handle dictionary input
+            for key, value in data.items():
+                if isinstance(value, uuid.UUID):
+                    data[key] = str(value)
+            return data
+        return data
 
 
 # Upload Schemas

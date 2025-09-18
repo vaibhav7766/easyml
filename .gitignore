@@ -5,6 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
+.vscode/
 
 # Distribution / packaging
 .Python
@@ -191,3 +192,6 @@ mlartifacts/
 models/
 *.pkl
 *.joblib
+
+#Custom files 
+.cleanupignore

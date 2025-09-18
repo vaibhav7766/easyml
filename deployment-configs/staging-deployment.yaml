@@ -1,0 +1,53 @@
+# EasyML Model Deployment Configuration
+# Staging environment for pre-production testing
+
+deployment:
+  project_id: "your-project-id-here"
+  environment: "staging"
+  
+  # Model Selection Criteria
+  model_selection:
+    primary_metric: "f1_score"
+    metric_threshold: 0.85
+    secondary_metrics:
+      accuracy: 0.8
+      precision: 0.8
+      recall: 0.8
+    prefer_latest: true
+    max_model_size_mb: 200
+  
+  # Container Configuration
+  container:
+    base_image: "python:3.10-slim"
+    cpu_request: "150m"
+    cpu_limit: "750m"
+    memory_request: "192Mi"
+    memory_limit: "768Mi"
+    env_vars:
+      LOG_LEVEL: "INFO"
+      WORKERS: "2"
+  
+  # Service Configuration
+  service:
+    port: 8000
+    api_prefix: "/api/v1"
+    enable_swagger: true
+    
+  # Scaling Configuration
+  scaling:
+    min_replicas: 1
+    max_replicas: 5
+    target_cpu_utilization: 75
+    auto_scaling: true
+  
+  # Advanced Options
+  deployment_strategy: "rolling"
+  monitoring_enabled: true
+  log_level: "INFO"
+  
+  # Health Checks
+  health_checks:
+    liveness_probe_path: "/health"
+    readiness_probe_path: "/ready"
+    initial_delay_seconds: 30
+    period_seconds: 10

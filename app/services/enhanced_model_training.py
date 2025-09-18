@@ -40,75 +40,120 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
         # Initialize DVC service
         self.dvc_service = DVCService()
     
-    async def train_model_with_persistence(
-        self,
-        data: Any,
-        target_column: str,
-        model_type: str,
-        hyperparameters: Optional[Dict[str, Any]] = None,
-        test_size: float = 0.2,
-        use_cross_validation: bool = True,
-        cv_folds: int = 5,
-        experiment_name: str = "easyml_experiment",
-        auto_version: bool = True
-    ) -> Dict[str, Any]:
-        """Train model with database persistence"""
+    async def train_model_with_persistence(self, data, target_column, model_type, test_size=0.2, 
+                                          hyperparameters=None, use_cross_validation=False, 
+                                          cv_folds=5, auto_version=True):
+        """
+        Enhanced model training with automatic persistence, MLflow logging, and DVC versioning
+        """
+        print("🚀 DEBUG: train_model_with_persistence called!")
+        print(f"🔍 DEBUG: auto_version={auto_version}, project_id={getattr(self.project, 'id', 'None')}")
         
-        # Start MLflow run
-        mlflow_experiment_id = None
-        mlflow_run_id = None
-        
-        if self.project:
-            experiment_name = f"project_{self.project.id}_{experiment_name}"
+        mlflow_run_info = None
         
         try:
-            # Set MLflow experiment
-            mlflow.set_experiment(experiment_name)
+            # Call the parent class train_model method to do the actual training
+            print("🔍 DEBUG: Calling parent train_model method...")
+            results = self.train_model(
+                data=data,
+                target_column=target_column,
+                model_type=model_type,
+                test_size=test_size,
+                hyperparameters=hyperparameters,
+                use_cross_validation=use_cross_validation,
+                cv_folds=cv_folds,
+                experiment_name=f"project_{self.project.id if self.project else 'unknown'}"
+            )
             
-            with mlflow.start_run() as run:
-                mlflow_run_id = run.info.run_id
-                mlflow_experiment_id = run.info.experiment_id
+            print(f"🔍 DEBUG: Training completed successfully! Model type: {results.get('model_type')}")
+            
+            # Check what keys are in results
+            print(f"🔍 DEBUG: Results keys: {list(results.keys())}")
+            
+            # Since the parent class doesn't return MLflow IDs, capture them directly
+            import mlflow
+            active_run = mlflow.active_run()
+            
+            if active_run:
+                mlflow_run_id = active_run.info.run_id
+                mlflow_experiment_id = active_run.info.experiment_id
+                print(f"🔍 DEBUG: Found active MLflow run - run_id: {mlflow_run_id}, experiment_id: {mlflow_experiment_id}")
+            else:
+                # Try to get the most recent run from the current experiment
+                try:
+                    experiment_name = f"project_{self.project.id if self.project else 'unknown'}"
+                    experiment = mlflow.get_experiment_by_name(experiment_name)
+                    if experiment:
+                        runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id], max_results=1, order_by=["start_time desc"])
+                        if not runs.empty:
+                            mlflow_run_id = runs.iloc[0]['run_id']
+                            mlflow_experiment_id = experiment.experiment_id
+                            print(f"🔍 DEBUG: Found recent MLflow run - run_id: {mlflow_run_id}, experiment_id: {mlflow_experiment_id}")
+                        else:
+                            mlflow_run_id = None
+                            mlflow_experiment_id = None
+                            print(f"🔍 DEBUG: No MLflow runs found in experiment")
+                    else:
+                        mlflow_run_id = None
+                        mlflow_experiment_id = None
+                        print(f"🔍 DEBUG: No MLflow experiment found")
+                except Exception as e:
+                    mlflow_run_id = None
+                    mlflow_experiment_id = None
+                    print(f"🔍 DEBUG: Error getting MLflow run: {e}")
+            
+            print(f"🔍 DEBUG: Final MLflow info - run_id: {mlflow_run_id}, experiment_id: {mlflow_experiment_id}")
+            
+            if mlflow_run_id:
+                print(f"🔍 DEBUG: MLflow run ID: {mlflow_run_id}")
                 
-                # Train the model using parent class
-                results = super().train_model(
-                    data=data,
-                    target_column=target_column,
-                    model_type=model_type,
-                    hyperparameters=hyperparameters,
-                    test_size=test_size,
-                    use_cross_validation=use_cross_validation,
-                    cv_folds=cv_folds,
-                    experiment_name=experiment_name
-                )
+                # Store experiment data in PostgreSQL
+                if self.db_session and self.project:
+                    print(f"🔍 DEBUG: Storing experiment data...")
+                    await self._store_experiment_data(results, mlflow_run_id, mlflow_experiment_id)
                 
-                # Save model to project folder if project exists
-                if self.project:
+                # Check conditions for model saving
+                print(f"🔍 DEBUG: Model saving conditions - auto_version={auto_version}, project={bool(self.project)}, model={bool(self.model)}")
+                
+                # Save model to filesystem if we have a project and model
+                model_path = None
+                if auto_version and self.project and self.model:
+                    print("🔍 DEBUG: Saving model to project...")
                     model_path = await self._save_model_to_project(results, mlflow_run_id)
                     
-                    # Version with DVC if auto_version is enabled
-                    if auto_version and model_path:
+                    if model_path:
+                        print(f"🔍 DEBUG: Model saved to: {model_path}")
+                        
+                        # Create ModelVersion record in PostgreSQL  
+                        await self._create_model_version_record(results, model_path, mlflow_run_id)
+                        
+                        # Version with DVC
                         await self._version_model_with_dvc(model_path, results, mlflow_run_id)
+                    else:
+                        print("⚠️ DEBUG: Failed to save model to filesystem")
                 
-                # Store session in MongoDB
-                await self._store_session_data(results, mlflow_run_id, mlflow_experiment_id)
+                # Store training session in MongoDB
+                if self.mongo_db is not None:
+                    await self._store_session_data(results, mlflow_run_id, mlflow_experiment_id)
                 
-                # Store experiment in PostgreSQL
-                await self._store_experiment_data(results, mlflow_run_id, mlflow_experiment_id)
-                
-                # Store MLflow run metadata in MongoDB
-                await self._store_mlflow_run_data(run, results)
-                
-                return results
-                
+                # Log MLflow run details
+                await self._log_mlflow_run(results, mlflow_run_id, mlflow_experiment_id)
+            
+            print("✅ DEBUG: Training with persistence completed successfully!")
+            return results
+            
         except Exception as e:
-            # Log error and re-raise
-            if self.mongo_db:
-                await self._log_error(str(e), mlflow_run_id)
-            raise e
+            print(f"❌ DEBUG: Training with persistence failed: {str(e)}")
+            error_msg = f"Training failed: {str(e)}"
+            await self._log_error(error_msg, mlflow_run_id)
+            return {"error": error_msg}
     
     async def _save_model_to_project(self, results: Dict[str, Any], mlflow_run_id: str) -> Optional[str]:
         """Save model to project folder structure"""
+        print(f"🔍 _save_model_to_project called - project: {bool(self.project)}, model: {bool(self.model)}")
+        
         if not self.project or not self.model:
+            print(f"⚠️ Cannot save model - project: {bool(self.project)}, model: {bool(self.model)}")
             return None
         
         # Create model directory structure with user/project isolation
@@ -188,7 +233,7 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
         mlflow_experiment_id: str
     ):
         """Store session data in MongoDB"""
-        if not self.mongo_db:
+        if self.mongo_db is None:
             return
         
         session_doc = ModelSessionDocument(
@@ -206,7 +251,7 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
         )
         
         # Upsert session document
-        await self.mongo_db.model_sessions.update_one(
+        self.mongo_db.model_sessions.update_one(
             {"session_id": self.session_id},
             {"$set": session_doc.dict()},
             upsert=True
@@ -244,9 +289,69 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
         self.db_session.refresh(experiment)
         self.ml_experiment = experiment
     
+    async def _create_model_version_record(
+        self, 
+        results: Dict[str, Any], 
+        model_path: str, 
+        mlflow_run_id: str
+    ):
+        """Create ModelVersion record for deployment service"""
+        print(f"🔍 DEBUG: _create_model_version_record called")
+        print(f"🔍 DEBUG: db_session={bool(self.db_session)}, project={bool(self.project)}, user={bool(self.user)}")
+        print(f"🔍 DEBUG: model_path={model_path}")
+        
+        if not self.db_session or not self.project or not self.user:
+            print(f"⚠️ Skipping ModelVersion creation: db_session={bool(self.db_session)}, project={bool(self.project)}, user={bool(self.user)}")
+            return
+        
+        try:
+            # Generate model name
+            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            model_name = f"{self.model_type}_{timestamp}_{self.session_id[:8]}"
+            
+            print(f"🔄 DEBUG: Creating ModelVersion record: {model_name}")
+            print(f"🔍 DEBUG: project_id={self.project.id}, experiment_id={self.ml_experiment.id if self.ml_experiment else None}")
+            
+            # Create ModelVersion record with DVC integration
+            model_version = ModelVersion(
+                project_id=self.project.id,
+                experiment_id=self.ml_experiment.id if self.ml_experiment else None,
+                name=model_name,
+                version="1.0.0",
+                model_type=str(self.model_type),
+                storage_path=model_path,
+                dvc_path=f"{model_path}.dvc",  # DVC file path
+                mlflow_run_id=mlflow_run_id,
+                mlflow_model_uri=f"runs:/{mlflow_run_id}/model" if mlflow_run_id else None,
+                performance_metrics=results.get('test_metrics', {}),
+                status="active"
+            )
+            
+            print(f"🔍 DEBUG: ModelVersion object created, adding to session...")
+            self.db_session.add(model_version)
+            
+            print(f"🔍 DEBUG: Committing to database...")
+            self.db_session.commit()
+            
+            print(f"🔍 DEBUG: Refreshing model_version...")
+            self.db_session.refresh(model_version)
+            self.model_version = model_version
+            
+            print(f"✅ DEBUG: ModelVersion record created successfully!")
+            print(f"✅ DEBUG: ID={model_version.id}, name={model_version.name}, status={model_version.status}")
+            
+        except Exception as e:
+            print(f"❌ DEBUG: Exception in _create_model_version_record: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(f"❌ DEBUG: Traceback: {traceback.format_exc()}")
+            if self.db_session:
+                print(f"🔄 DEBUG: Rolling back database transaction...")
+                self.db_session.rollback()
+            raise e
+    
     async def _store_mlflow_run_data(self, run, results: Dict[str, Any]):
         """Store MLflow run metadata in MongoDB"""
-        if not self.mongo_db:
+        if self.mongo_db is None:
             return
         
         run_doc = MLFlowRunDocument(
@@ -263,11 +368,11 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
             artifact_uri=run.info.artifact_uri
         )
         
-        await self.mongo_db.mlflow_runs.insert_one(run_doc.dict())
+        self.mongo_db.mlflow_runs.insert_one(run_doc.dict())
     
     async def _log_error(self, error_message: str, mlflow_run_id: Optional[str] = None):
         """Log error to MongoDB"""
-        if not self.mongo_db:
+        if self.mongo_db is None:
             return
         
         error_doc = {
@@ -279,7 +384,7 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
             "timestamp": datetime.utcnow()
         }
         
-        await self.mongo_db.training_errors.insert_one(error_doc)
+        self.mongo_db.training_errors.insert_one(error_doc)
     
     def _calculate_file_hash(self, file_path: str) -> str:
         """Calculate MD5 hash of file"""
@@ -291,19 +396,24 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
     
     async def get_session_data(self) -> Optional[Dict[str, Any]]:
         """Get session data from MongoDB"""
-        if not self.mongo_db:
+        if self.mongo_db is None:
             return None
         
-        session = await self.mongo_db.model_sessions.find_one(
+        session = self.mongo_db.model_sessions.find_one(
             {"session_id": self.session_id}
         )
         return session
     
     async def cleanup_expired_sessions(self):
         """Clean up expired sessions"""
-        if not self.mongo_db:
+        if self.mongo_db is None:
             return
         
-        await self.mongo_db.model_sessions.delete_many({
+        self.mongo_db.model_sessions.delete_many({
             "expires_at": {"$lt": datetime.utcnow()}
         })
+    
+    async def _log_mlflow_run(self, results: Dict[str, Any], mlflow_run_id: str, mlflow_experiment_id: str):
+        """Log MLflow run details for debugging"""
+        print(f"🔍 DEBUG: MLflow run logged - run_id: {mlflow_run_id}, experiment_id: {mlflow_experiment_id}")
+        print(f"🔍 DEBUG: Training results logged with {len(results)} metrics")

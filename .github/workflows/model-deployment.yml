@@ -1,0 +1,266 @@
+name: EasyML Model Deployment Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'Project ID to deploy'
+        required: true
+        type: string
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      manual_model_id:
+        description: 'Specific model ID to deploy (optional)'
+        required: false
+        type: string
+      force_deploy:
+        description: 'Force deployment even if conditions not met'
+        required: false
+        type: boolean
+        default: false
+
+  push:
+    branches:
+      - main
+    paths:
+      - 'models/**'
+      - 'deployment-configs/**'
+
+env:
+  PYTHON_VERSION: '3.10'
+  DOCKER_REGISTRY: 'your-docker-registry.com'
+  KUBECTL_VERSION: 'v1.28.0'
+
+jobs:
+  model-validation:
+    name: Validate Models
+    runs-on: ubuntu-latest
+    outputs:
+      deploy-ready: ${{ steps.validation.outputs.ready }}
+      selected-model: ${{ steps.validation.outputs.model_id }}
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install dvc[azure]
+      
+      - name: Configure DVC
+        run: |
+          dvc remote add -d azure ${{ secrets.DVC_REMOTE_URL }}
+          dvc remote modify azure connection_string ${{ secrets.AZURE_CONNECTION_STRING }}
+        env:
+          DVC_REMOTE_URL: ${{ secrets.DVC_REMOTE_URL }}
+          AZURE_CONNECTION_STRING: ${{ secrets.AZURE_CONNECTION_STRING }}
+      
+      - name: Pull Latest Models
+        run: |
+          dvc pull models/
+      
+      - name: Validate Models
+        id: validation
+        run: |
+          python scripts/validate_deployment_models.py \
+            --project-id "${{ github.event.inputs.project_id || 'auto-detect' }}" \
+            --environment "${{ github.event.inputs.environment || 'staging' }}" \
+            --manual-model-id "${{ github.event.inputs.manual_model_id || '' }}" \
+            --force "${{ github.event.inputs.force_deploy || 'false' }}"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MONGODB_URL: ${{ secrets.MONGODB_URL }}
+
+  build-container:
+    name: Build Model Container
+    needs: model-validation
+    if: needs.model-validation.outputs.deploy-ready == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.build.outputs.image_tag }}
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Docker Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Build and Push Container
+        id: build
+        run: |
+          MODEL_ID="${{ needs.model-validation.outputs.selected-model }}"
+          IMAGE_TAG="${{ env.DOCKER_REGISTRY }}/easyml/model-${MODEL_ID}:${{ github.sha }}"
+          
+          # Generate Dockerfile for specific model
+          python scripts/generate_model_dockerfile.py \
+            --model-id "$MODEL_ID" \
+            --output-dir "./docker-build"
+          
+          # Build container
+          docker build \
+            -t "$IMAGE_TAG" \
+            -t "${{ env.DOCKER_REGISTRY }}/easyml/model-${MODEL_ID}:latest" \
+            ./docker-build
+          
+          # Push to registry
+          docker push "$IMAGE_TAG"
+          docker push "${{ env.DOCKER_REGISTRY }}/easyml/model-${MODEL_ID}:latest"
+          
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+  deploy-to-kubernetes:
+    name: Deploy to Kubernetes
+    needs: [model-validation, build-container]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+      
+      - name: Configure Kubernetes Access
+        run: |
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
+          kubectl cluster-info
+        env:
+          KUBECONFIG: kubeconfig
+      
+      - name: Generate Deployment Manifests
+        run: |
+          python scripts/generate_k8s_manifests.py \
+            --model-id "${{ needs.model-validation.outputs.selected-model }}" \
+            --environment "${{ github.event.inputs.environment || 'staging' }}" \
+            --image-tag "${{ needs.build-container.outputs.image-tag }}" \
+            --output-dir "./k8s-manifests"
+      
+      - name: Deploy to Kubernetes
+        run: |
+          export KUBECONFIG=kubeconfig
+          
+          # Create namespace if it doesn't exist
+          NAMESPACE="easyml-${{ github.event.inputs.environment || 'staging' }}"
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Apply deployment manifests
+          kubectl apply -f ./k8s-manifests/ -n "$NAMESPACE"
+          
+          # Wait for deployment to be ready
+          DEPLOYMENT_NAME="model-${{ needs.model-validation.outputs.selected-model }}"
+          kubectl wait --for=condition=available --timeout=300s deployment/"$DEPLOYMENT_NAME" -n "$NAMESPACE"
+      
+      - name: Verify Deployment
+        run: |
+          export KUBECONFIG=kubeconfig
+          NAMESPACE="easyml-${{ github.event.inputs.environment || 'staging' }}"
+          DEPLOYMENT_NAME="model-${{ needs.model-validation.outputs.selected-model }}"
+          
+          # Get deployment status
+          kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE"
+          kubectl get pods -l app="$DEPLOYMENT_NAME" -n "$NAMESPACE"
+          
+          # Test health endpoint
+          kubectl port-forward deployment/"$DEPLOYMENT_NAME" 8080:8000 -n "$NAMESPACE" &
+          PF_PID=$!
+          sleep 10
+          
+          # Test the API
+          curl -f http://localhost:8080/health || exit 1
+          kill $PF_PID
+
+  update-deployment-record:
+    name: Update Deployment Database
+    needs: [model-validation, build-container, deploy-to-kubernetes]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Update Deployment Record
+        run: |
+          python scripts/update_deployment_record.py \
+            --model-id "${{ needs.model-validation.outputs.selected-model }}" \
+            --environment "${{ github.event.inputs.environment || 'staging' }}" \
+            --image-tag "${{ needs.build-container.outputs.image-tag }}" \
+            --status "active"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+  notify-deployment:
+    name: Notify Deployment Status
+    needs: [model-validation, build-container, deploy-to-kubernetes, update-deployment-record]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Notify Success
+        if: ${{ needs.deploy-to-kubernetes.result == 'success' }}
+        run: |
+          echo "🚀 Model deployment successful!"
+          echo "Model ID: ${{ needs.model-validation.outputs.selected-model }}"
+          echo "Environment: ${{ github.event.inputs.environment || 'staging' }}"
+          echo "Image: ${{ needs.build-container.outputs.image-tag }}"
+          
+          # You can add Slack/Teams/Email notifications here
+      
+      - name: Notify Failure
+        if: ${{ needs.deploy-to-kubernetes.result == 'failure' }}
+        run: |
+          echo "❌ Model deployment failed!"
+          echo "Check the logs for details."
+          exit 1
+
+  rollback-on-failure:
+    name: Rollback on Failure
+    needs: [model-validation, deploy-to-kubernetes]
+    runs-on: ubuntu-latest
+    if: ${{ failure() && github.event.inputs.environment == 'production' }}
+    
+    steps:
+      - name: Rollback Production Deployment
+        run: |
+          echo "🔄 Rolling back production deployment..."
+          export KUBECONFIG=kubeconfig
+          NAMESPACE="easyml-production"
+          DEPLOYMENT_NAME="model-${{ needs.model-validation.outputs.selected-model }}"
+          
+          # Rollback to previous revision
+          kubectl rollout undo deployment/"$DEPLOYMENT_NAME" -n "$NAMESPACE"
+          kubectl rollout status deployment/"$DEPLOYMENT_NAME" -n "$NAMESPACE"

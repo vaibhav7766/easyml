@@ -1,119 +1,193 @@
-"""
-Database configuration and connection management for MongoDB and PostgreSQL
-"""
 import os
-from typing import Generator, Optional
+import ssl
+from typing import Generator, Optional, AsyncGenerator
 from pymongo import MongoClient
 from pymongo.database import Database
 from motor.motor_asyncio import AsyncIOMotorClient
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-
 from app.core.config import settings
 
+# --- Postgres URL handling (derived properties come from settings) ---
+POSTGRES_URL = settings.postgres_url
+POSTGRES_SYNC_URL = POSTGRES_URL.replace("postgres://", "postgresql://", 1)
+POSTGRES_ASYNC_URL = POSTGRES_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 
-# PostgreSQL Configuration
-POSTGRES_URL = os.getenv("POSTGRES_URL", "postgresql://easyml_user:easyml_pass@localhost:5432/easyml_db")
-POSTGRES_ASYNC_URL = os.getenv("POSTGRES_ASYNC_URL", "postgresql+asyncpg://easyml_user:easyml_pass@localhost:5432/easyml_db")
+# --- SQLAlchemy engines & sessions ---
+engine_kwargs = {}
+async_engine_kwargs = {}
 
-# SQLAlchemy setup
-engine = create_engine(POSTGRES_URL)
-async_engine = create_async_engine(POSTGRES_ASYNC_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-AsyncSessionLocal = sessionmaker(
-    async_engine, class_=AsyncSession, expire_on_commit=False
-)
+# NOTE: If you need a real SSLContext for asyncpg, construct one and put it under connect_args["ssl"].
+# For many hosted providers, sslmode=require in the URL is sufficient for sync driver.
+engine = create_engine(POSTGRES_SYNC_URL, **engine_kwargs, pool_pre_ping=True)
+async_engine = create_async_engine(POSTGRES_ASYNC_URL, **async_engine_kwargs, pool_pre_ping=True)
+
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+AsyncSessionLocal = sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
 
 Base = declarative_base()
 
 
 class DatabaseManager:
-    """Database connection manager for both MongoDB and PostgreSQL"""
-    
-    def __init__(self):
-        # MongoDB
-        self.client: MongoClient = None
-        self.database: Database = None
+    """Manage MongoDB sync + async clients and databases."""
+
+    def __init__(self) -> None:
+        """Initialize placeholders."""
+        self.client: Optional[MongoClient] = None
+        self.database: Optional[Database] = None
         self.async_client: Optional[AsyncIOMotorClient] = None
         self.async_database = None
-    
+
     def connect(self) -> None:
-        """Connect to MongoDB"""
-        mongo_uri = settings.mongo_uri or os.environ.get("MONGO_URI", "mongodb://localhost:27017")
-        
-        self.client = MongoClient(mongo_uri)
-        self.database = self.client.get_database(settings.database_name)
-    
+        """
+        Create a synchronous MongoClient and set self.database.
+        Safe to call from FastAPI startup or lazily on first access.
+        """
+        mongo_uri = os.getenv("MONGO_URL") or settings.mongo_url
+        db_name = os.getenv("MONGO_DB_NAME") or settings.mongo_db_name
+
+        try:
+            # Use tls=True (modern) not ssl=True
+            self.client = MongoClient(
+                mongo_uri,
+                tls=True,
+                # WARNING: tlsAllowInvalidCertificates=True disables cert validation.
+                # Remove it in production.
+                tlsAllowInvalidCertificates=True,
+                retryWrites=False,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+                socketTimeoutMS=5000,
+            )
+            self.database = self.client.get_database(db_name)
+            # quick health check
+            self.client.admin.command("ping")
+        except Exception:
+            # keep None on failure; don't crash app during import
+            self.client = None
+            self.database = None
+
     async def connect_async(self) -> None:
-        """Connect to MongoDB asynchronously"""
-        mongo_uri = settings.mongo_uri or os.environ.get("MONGO_URI", "mongodb://localhost:27017")
-        
+        """
+        Initialize AsyncIOMotorClient and set async_database.
+        Call once at startup or lazily.
+        """
+        mongo_uri = os.getenv("MONGO_URL") or settings.mongo_url
+        db_name = os.getenv("MONGO_DB_NAME") or settings.mongo_db_name
+
+        # Motor client is lightweight to create; you may still want to create on startup
         self.async_client = AsyncIOMotorClient(mongo_uri)
-        self.async_database = self.async_client.get_database(settings.database_name)
-    
+        self.async_database = self.async_client.get_database(db_name)
+
     def disconnect(self) -> None:
-        """Disconnect from MongoDB"""
-        if self.client:
-            self.client.close()
-        if self.async_client:
-            self.async_client.close()
-    
-    def get_database(self) -> Database:
-        """Get MongoDB database instance"""
+        """Close both sync and async clients."""
+        try:
+            if self.client:
+                self.client.close()
+        finally:
+            if self.async_client:
+                # motor's close() is synchronous (it schedules closing)
+                self.async_client.close()
+
+    def get_database(self) -> Optional[Database]:
+        """
+        Return sync MongoDB Database. Lazily connects if needed.
+        """
         if not self.database:
             self.connect()
         return self.database
-    
+
     async def get_async_database(self):
-        """Get async MongoDB database instance"""
+        """
+        Return async MongoDB Database. Lazily connects if needed.
+        """
         if not self.async_database:
             await self.connect_async()
         return self.async_database
 
 
-# Global database manager instance
+# Singleton instance used by deps
 db_manager = DatabaseManager()
 
 
-def get_database() -> Generator[Database, None, None]:
+# --- FastAPI / helper functions ---
+
+def get_database() -> Generator[Optional[Database], None, None]:
     """
-    Dependency to get MongoDB database session
-    Use this with FastAPI Depends()
+    FastAPI dependency for sync MongoDB.
+    Usage: db = Depends(get_database)
     """
     try:
         database = db_manager.get_database()
         yield database
-    finally:
-        # Connection is managed by the DatabaseManager
-        pass
+    except Exception:
+        # If Mongo isn't critical, yield None; otherwise re-raise to fail fast.
+        yield None
 
 
-async def get_mongo_database():
-    """Get async MongoDB database"""
+async def get_database_database():
+    """
+    Async helper: returns the async Motor database instance.
+    Usage: db = Depends(get_database_database)
+    """
     return await db_manager.get_async_database()
 
 
-# PostgreSQL dependencies
-async def get_async_session():
-    """Get PostgreSQL async session"""
+def get_db() -> Generator[Session, None, None]:
+    """
+    FastAPI dependency for synchronous SQLAlchemy sessions.
+    Yields a session and ensures it's closed. Rolls back on exception.
+    Usage in FastAPI endpoint: db: Session = Depends(get_db)
+    """
+    db: Optional[Session] = None
+    try:
+        db = SessionLocal()
+        yield db
+    except Exception:
+        if db is not None:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        raise
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+    """
+    FastAPI dependency for async SQLAlchemy sessions.
+    Usage: session: AsyncSession = Depends(get_async_session)
+    """
     async with AsyncSessionLocal() as session:
         yield session
 
 
-def get_session():
-    """Get PostgreSQL sync session"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def get_session() -> Session:
+    """
+    Convenience helper that returns a synchronous SQLAlchemy Session instance.
+    Caller is responsible for closing the session when done.
+    Use in scripts/tests: session = get_session(); ...; session.close()
+    """
+    return SessionLocal()
 
 
-def SessionDep() -> Generator[Database, None, None]:
+def get_database_db() -> Optional[Database]:
     """
-    Legacy compatibility function for MongoDB
-    Use get_database() instead
+    Convenience (non-generator) accessor for sync MongoDB database.
     """
-    return get_database()
+    return db_manager.get_database()
+
+
+def SessionDep() -> Generator[Optional[Database], None, None]:
+    """
+    Legacy compatibility dependency for FastAPI that delegates to get_database.
+    Use Depends(SessionDep) if code expects this name.
+    """
+    yield from get_database()

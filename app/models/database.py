@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from bson import ObjectId
 from pymongo.database import Database
-
+from app.core.config import settings
 from app.core.enums import ProjectStatus, TaskType, ModelType
 
 

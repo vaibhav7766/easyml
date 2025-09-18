@@ -4,69 +4,55 @@ Core configuration and settings for EasyML application
 import os
 from typing import Optional
 from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+from pydantic import field_validator, Field
+import json
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class Settings(BaseSettings):
-    """Application settings"""
-    
-    # App Info
-    app_name: str = "EasyML API"
-    app_version: str = "0.1.0"
-    description: str = "No-code machine learning automation platform"
-    
-    # Environment
-    environment: str = "development"
-    debug: bool = True
-    
-    # Database
-    mongo_uri: Optional[str] = None
-    database_name: str = "easyml"
-    
-    # Enhanced Database Configuration
-    postgres_url: str = "postgresql://easyml_user:easyml_password@localhost:5432/easyml_db"
-    mongo_url: str = "mongodb://localhost:27017"
-    mongo_db_name: str = "easyml"
-    
-    # DVC Configuration
-    dvc_remote_url: Optional[str] = None
-    dvc_remote_name: str = "azure"
-    dvc_azure_connection_string: Optional[str] = None
-    dvc_azure_container_name: Optional[str] = None
-    
-    # Additional Azure settings for container environments
-    azure_storage_account: Optional[str] = None
-    azure_storage_key: Optional[str] = None
-    
-    # MLflow Configuration
-    mlflow_tracking_uri: str = "file:./mlruns"
-    
-    # File Storage
-    upload_dir: str = "uploads"
-    max_upload_size: int = 100 * 1024 * 1024  # 100MB
-    allowed_extensions: list = [".csv", ".xlsx", ".json"]
-    
-    # API
-    api_v1_prefix: str = "/api/v1"
-    cors_origins: list = ["http://localhost:3000", "http://localhost:8080"]
-    
-    # Security
-    secret_key: str = "your-secret-key-here"
-    access_token_expire_minutes: int = 30
-    
-    # ML/Visualization
-    max_plot_features: int = 20
-    default_figure_size: tuple = (10, 6)
-    
+    postgres_url: str = Field(..., alias="POSTGRES_URL")
+    mongo_url: str = Field(..., alias="MONGO_URL")
+    mongo_db_name: str = Field(..., alias="MONGO_DB_NAME")
+
+    secret_key: str = Field(..., alias="SECRET_KEY")
+    access_token_expire_minutes: int = Field(..., alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+
+    dvc_remote_url: str = Field(..., alias="DVC_REMOTE_URL")
+    dvc_remote_name: str = Field(..., alias="DVC_REMOTE_NAME")
+    dvc_azure_connection_string: str = Field(..., alias="DVC_AZURE_CONNECTION_STRING")
+    dvc_azure_container_name: str = Field(..., alias="DVC_AZURE_CONTAINER_NAME")
+
+    azure_storage_account: str = Field(..., alias="AZURE_STORAGE_ACCOUNT")
+    azure_storage_key: str = Field(..., alias="AZURE_STORAGE_KEY")
+
+    mlflow_tracking_uri: str = Field(..., alias="MLFLOW_TRACKING_URI")
+
+    cors_origins: list[str] = Field(default_factory=list, alias="CORS_ORIGINS")
+    debug: bool = Field(False, alias="DEBUG")
+    log_level: str = Field("info", alias="LOG_LEVEL")
+    testing: bool = Field(False, alias="TESTING")
+    upload_dir: str = Field("uploads", alias="UPLOAD_DIR")
+
+    @field_validator("cors_origins", mode="before")
+    def parse_cors(cls, v):
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
+
+    @property
+    def postgres_sync_url(self) -> str:
+        return self.postgres_url.replace("postgres://", "postgresql://", 1)
+
+    @property
+    def postgres_async_url(self) -> str:
+        return self.postgres_url.replace("postgres://", "postgresql+asyncpg://", 1)
+
     class Config:
         env_file = ".env"
-        case_sensitive = False
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Ensure upload directory exists
-        os.makedirs(self.upload_dir, exist_ok=True)
-
-
+        case_sensitive = True  # since your .env uses uppercase
 settings = Settings()
 
 

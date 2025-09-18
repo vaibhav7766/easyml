@@ -1,0 +1,148 @@
+# Data Preparation Parameters
+data_preparation:
+  test_size: 0.2
+  random_state: 42
+  validation_split: 0.2
+  remove_duplicates: true
+  handle_missing_values: "median"
+  outlier_detection: "iqr"
+  outlier_threshold: 1.5
+
+# Feature Engineering Parameters
+feature_engineering:
+  scaling_method: "standard"  # standard, minmax, robust
+  feature_selection: true
+  feature_selection_method: "mutual_info"  # mutual_info, chi2, f_score
+  max_features: 50
+  encoding_strategy: "target"  # onehot, target, binary
+  create_polynomial_features: false
+  polynomial_degree: 2
+  create_interaction_features: true
+
+# Model Training Parameters
+model_training:
+  model_type: "random_forest"  # random_forest, xgboost, lightgbm, neural_network
+  
+  # Hyperparameters for different models
+  hyperparameters:
+    random_forest:
+      n_estimators: 100
+      max_depth: 10
+      min_samples_split: 5
+      min_samples_leaf: 2
+      random_state: 42
+    
+    xgboost:
+      n_estimators: 100
+      max_depth: 6
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      random_state: 42
+    
+    lightgbm:
+      n_estimators: 100
+      max_depth: 6
+      learning_rate: 0.1
+      num_leaves: 31
+      random_state: 42
+    
+    neural_network:
+      hidden_layers: [128, 64, 32]
+      activation: "relu"
+      dropout_rate: 0.3
+      learning_rate: 0.001
+      batch_size: 32
+      epochs: 100
+      early_stopping_patience: 10
+
+  # Cross Validation
+  cross_validation:
+    folds: 5
+    shuffle: true
+    stratified: true
+    random_state: 42
+
+  # Early Stopping
+  early_stopping:
+    patience: 10
+    monitor: "val_loss"
+    min_delta: 0.001
+
+  # Model Saving
+  save_best_only: true
+  save_format: "joblib"  # joblib, pickle, onnx
+
+# Model Evaluation Parameters
+model_evaluation:
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1_score"
+    - "roc_auc"
+    - "log_loss"
+  
+  threshold_optimization: true
+  optimization_metric: "f1_score"
+  
+  # Performance thresholds
+  performance_thresholds:
+    accuracy: 0.85
+    precision: 0.80
+    recall: 0.80
+    f1_score: 0.80
+    roc_auc: 0.85
+
+# Model Validation Parameters
+model_validation:
+  validation_strategy: "holdout"  # holdout, time_series, custom
+  performance_threshold: 0.85
+  drift_detection: true
+  explainability_analysis: true
+  bias_fairness_check: true
+
+# Deployment Parameters
+deployment:
+  model_selection_criteria:
+    primary_metric: "f1_score"
+    secondary_metrics: ["precision", "recall"]
+    model_size_limit_mb: 100
+    inference_time_limit_ms: 1000
+  
+  optimization_level: "moderate"  # basic, moderate, aggressive
+  
+  # Model optimization settings
+  optimization:
+    quantization: false
+    pruning: false
+    knowledge_distillation: false
+    onnx_conversion: true
+  
+  # API Configuration
+  api:
+    max_batch_size: 1000
+    timeout_seconds: 30
+    rate_limit_per_minute: 1000
+    enable_monitoring: true
+    enable_logging: true
+
+# Monitoring and Alerting
+monitoring:
+  performance_monitoring: true
+  drift_monitoring: true
+  
+  # Alert thresholds
+  alerts:
+    accuracy_drop_threshold: 0.05
+    prediction_drift_threshold: 0.1
+    data_drift_threshold: 0.1
+    error_rate_threshold: 0.05
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "json"
+  include_predictions: true
+  include_features: false
+  retention_days: 30

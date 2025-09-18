@@ -10,7 +10,7 @@ from pymongo.database import Database
 
 from app.models.sql_models import Project, User, MLExperiment, ModelVersion
 from app.models.mongo_schemas import ProjectConfigDocument, AuditLogDocument
-from app.core.database import get_session, get_database
+from app.core.database import get_db, get_database
 import mlflow
 
 
@@ -26,7 +26,7 @@ class ProjectService:
     async def create_project(
         self, 
         db: Session, 
-        mongo_db: Database,
+        mongo_db: Optional[Database],
         user: User,
         name: str,
         description: Optional[str] = None,
@@ -75,14 +75,16 @@ class ProjectService:
             dataset_storage_path=project_datasets_path
         )
         
-        await mongo_db.project_configs.insert_one(project_config.dict())
-        
-        # Log project creation
-        await self._log_action(
-            mongo_db,
-            user_id=str(user.id),
-            project_id=str(project.id),
-            action_type="project_created",
+        # Save project configuration in MongoDB (if available)
+        if mongo_db is not None:
+            mongo_db.project_configs.insert_one(project_config.dict())
+            
+            # Log project creation
+            await self._log_action(
+                mongo_db,
+                user_id=str(user.id),
+                project_id=str(project.id),
+                action_type="project_created",
             resource_type="project",
             resource_id=str(project.id),
             new_values={"name": name, "description": description}
@@ -104,7 +106,7 @@ class ProjectService:
     async def get_project_by_id(
         self,
         db: Session,
-        mongo_db: Database,
+        mongo_db: Optional[Database],
         project_id: str,
         user: User
     ) -> Optional[Dict[str, Any]]:
@@ -118,10 +120,12 @@ class ProjectService:
         if not project:
             return None
         
-        # Get configuration from MongoDB
-        config = await mongo_db.project_configs.find_one({
-            "project_id": project_id
-        })
+        # Get configuration from MongoDB (if available)
+        config = None
+        if mongo_db is not None:
+            config = mongo_db.project_configs.find_one({
+                "project_id": project_id
+            })
         
         # Get experiment count
         experiment_count = db.query(MLExperiment).filter(
@@ -145,7 +149,7 @@ class ProjectService:
     async def update_project(
         self,
         db: Session,
-        mongo_db: Database,
+        mongo_db: Optional[Database],
         project_id: str,
         user: User,
         updates: Dict[str, Any]
@@ -172,11 +176,12 @@ class ProjectService:
         db.commit()
         db.refresh(project)
         
-        # Update MongoDB configuration
-        await mongo_db.project_configs.update_one(
-            {"project_id": project_id},
-            {"$set": {**updates, "updated_at": datetime.utcnow()}}
-        )
+        # Update MongoDB configuration (if available)
+        if mongo_db is not None:
+            mongo_db.project_configs.update_one(
+                {"project_id": project_id},
+                {"$set": {**updates, "updated_at": datetime.utcnow()}}
+            )
         
         # Log update
         await self._log_action(
@@ -195,7 +200,7 @@ class ProjectService:
     async def delete_project(
         self,
         db: Session,
-        mongo_db: Database,
+        mongo_db: Optional[Database],
         project_id: str,
         user: User
     ) -> bool:
@@ -212,11 +217,12 @@ class ProjectService:
         project.is_active = False
         db.commit()
         
-        # Update MongoDB
-        await mongo_db.project_configs.update_one(
-            {"project_id": project_id},
-            {"$set": {"is_active": False, "updated_at": datetime.utcnow()}}
-        )
+        # Update MongoDB (if available)
+        if mongo_db is not None:
+            mongo_db.project_configs.update_one(
+                {"project_id": project_id},
+                {"$set": {"is_active": False, "updated_at": datetime.utcnow()}}
+            )
         
         # Log deletion
         await self._log_action(
@@ -240,7 +246,7 @@ class ProjectService:
     
     async def _log_action(
         self,
-        mongo_db: Database,
+        mongo_db: Optional[Database],
         user_id: str,
         project_id: str,
         action_type: str,
@@ -251,6 +257,10 @@ class ProjectService:
         session_id: Optional[str] = None
     ):
         """Log action to audit trail"""
+        if mongo_db is None:
+            print(f"⚠️  Warning: MongoDB unavailable, skipping audit log for {action_type}")
+            return
+            
         log_entry = AuditLogDocument(
             action_id=str(uuid.uuid4()),
             user_id=user_id,
@@ -263,4 +273,4 @@ class ProjectService:
             session_id=session_id
         )
         
-        await mongo_db.audit_logs.insert_one(log_entry.dict())
+        mongo_db.audit_logs.insert_one(log_entry.dict())

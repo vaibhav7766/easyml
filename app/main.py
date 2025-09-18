@@ -2,6 +2,9 @@
 EasyML - No-Code Machine Learning Platform
 Main FastAPI application with modular architecture
 """
+from dotenv import load_dotenv
+load_dotenv()  # Load environment variables from .env file
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,7 +12,9 @@ import uvicorn
 from contextlib import asynccontextmanager
 
 from app.core.config import get_settings
+from app.core.database import engine, Base
 from app.api.v1.api import api_router
+import app.models.sql_models  # Import models to register them
 
 
 # Application lifespan management
@@ -20,7 +25,16 @@ async def lifespan(app: FastAPI):
     print("🚀 Starting EasyML Application...")
     settings = get_settings()
     print(f"📁 Upload directory: {settings.upload_dir}")
-    print(f"🗄️  MongoDB URI: {settings.mongo_uri}")
+    print(f"🗄️  MongoDB URI: {settings.mongo_url}")
+    
+    # Auto-create database tables
+    try:
+        print("🔧 Creating database tables if they don't exist...")
+        Base.metadata.create_all(bind=engine)
+        print("✅ Database tables ready!")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not create database tables: {e}")
+        print("📝 Note: Application will continue, but database operations may fail")
     
     yield
     

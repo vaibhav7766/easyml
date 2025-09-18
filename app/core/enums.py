@@ -115,3 +115,18 @@ class MetricType(str, Enum):
     SILHOUETTE_SCORE = "silhouette_score"
     CALINSKI_HARABASZ = "calinski_harabasz"
     DAVIES_BOULDIN = "davies_bouldin"
+
+
+class DeploymentEnvironment(str, Enum):
+    """Available deployment environments"""
+    DEVELOPMENT = "development"
+    STAGING = "staging"
+    PRODUCTION = "production"
+
+
+class DeploymentStrategy(str, Enum):
+    """Available deployment strategies"""
+    BLUE_GREEN = "blue_green"
+    ROLLING = "rolling"
+    CANARY = "canary"
+    RECREATE = "recreate"

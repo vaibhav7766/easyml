@@ -1,0 +1,99 @@
+stages:
+  data_preparation:
+    cmd: python scripts/data_preparation.py
+    deps:
+    - scripts/data_preparation.py
+    - datasets/raw/
+    params:
+    - data_preparation.test_size
+    - data_preparation.random_state
+    - data_preparation.validation_split
+    outs:
+    - datasets/processed/train.csv
+    - datasets/processed/test.csv
+    - datasets/processed/validation.csv
+    metrics:
+    - reports/data_preparation_metrics.json
+
+  feature_engineering:
+    cmd: python scripts/feature_engineering.py
+    deps:
+    - scripts/feature_engineering.py
+    - datasets/processed/train.csv
+    - datasets/processed/test.csv
+    - datasets/processed/validation.csv
+    params:
+    - feature_engineering.scaling_method
+    - feature_engineering.feature_selection
+    - feature_engineering.encoding_strategy
+    outs:
+    - datasets/features/
+    - models/preprocessors/
+    metrics:
+    - reports/feature_engineering_metrics.json
+
+  model_training:
+    cmd: python scripts/model_training.py
+    deps:
+    - scripts/model_training.py
+    - datasets/features/
+    params:
+    - model_training.model_type
+    - model_training.hyperparameters
+    - model_training.cross_validation.folds
+    - model_training.early_stopping.patience
+    outs:
+    - models/trained/
+    - models/checkpoints/
+    metrics:
+    - reports/training_metrics.json
+    plots:
+    - reports/plots/training_curves.json
+    - reports/plots/confusion_matrix.json
+
+  model_evaluation:
+    cmd: python scripts/model_evaluation.py
+    deps:
+    - scripts/model_evaluation.py
+    - models/trained/
+    - datasets/features/
+    params:
+    - model_evaluation.metrics
+    - model_evaluation.threshold_optimization
+    outs:
+    - reports/evaluation/
+    metrics:
+    - reports/evaluation_metrics.json
+    plots:
+    - reports/plots/roc_curve.json
+    - reports/plots/precision_recall.json
+    - reports/plots/feature_importance.json
+
+  model_validation:
+    cmd: python scripts/model_validation.py
+    deps:
+    - scripts/model_validation.py
+    - models/trained/
+    - datasets/features/
+    params:
+    - model_validation.validation_strategy
+    - model_validation.performance_threshold
+    outs:
+    - reports/validation/
+    metrics:
+    - reports/validation_metrics.json
+
+  model_deployment_prep:
+    cmd: python scripts/model_deployment_prep.py
+    deps:
+    - scripts/model_deployment_prep.py
+    - models/trained/
+    - models/preprocessors/
+    params:
+    - deployment.model_selection_criteria
+    - deployment.optimization_level
+    outs:
+    - models/deployment/
+    - models/deployment/model_metadata.json
+    metrics:
+    - reports/deployment_readiness.json

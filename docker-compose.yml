@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  # EasyML API Service
+  easyml-api:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+      target: production
+    container_name: easyml-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Database Configuration
+      - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/easyml
+      - MONGO_URL=mongodb://mongo:27017/easyml
+      
+      # Azure Configuration
+      - AZURE_STORAGE_CONNECTION_STRING=${AZURE_STORAGE_CONNECTION_STRING}
+      - AZURE_CONTAINER_NAME=${AZURE_CONTAINER_NAME:-easyml-storage}
+      
+      # DVC Configuration
+      - DVC_REMOTE_URL=azure://easyml-storage/dvc
+      - DVC_AZURE_CONNECTION_STRING=${AZURE_STORAGE_CONNECTION_STRING}
+      
+      # Application Configuration
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-jwt-secret-here}
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      
+      # ML Configuration
+      - MODEL_STORAGE_PATH=/app/models
+      - UPLOAD_PATH=/app/uploads
+      - MAX_FILE_SIZE=100MB
+      
+    volumes:
+      - ./uploads:/app/uploads
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./dvc_storage:/app/dvc_storage
+    depends_on:
+      - postgres
+      - mongo
+    restart: unless-stopped
+    networks:
+      - easyml-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: easyml-postgres
+    environment:
+      - POSTGRES_DB=easyml
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/postgres_init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - easyml-network
+    restart: unless-stopped
+
+  # MongoDB Database
+  mongo:
+    image: mongo:7-jammy
+    container_name: easyml-mongo
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=admin
+      - MONGO_INITDB_DATABASE=easyml
+    volumes:
+      - mongo_data:/data/db
+      - ./scripts/mongo_init.js:/docker-entrypoint-initdb.d/mongo-init.js
+    ports:
+      - "27017:27017"
+    networks:
+      - easyml-network
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy (Optional - for production)
+  nginx:
+    image: nginx:alpine
+    container_name: easyml-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - easyml-api
+    networks:
+      - easyml-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  mongo_data:
+    driver: local
+
+networks:
+  easyml-network:
+    driver: bridge

@@ -1,0 +1,49 @@
+# EasyML Model Deployment Configuration
+# Production environment deployment with high-performance model selection
+
+deployment:
+  project_id: "your-project-id-here"
+  environment: "production"
+  
+  # Model Selection Criteria
+  model_selection:
+    primary_metric: "accuracy"
+    metric_threshold: 0.9  # Only deploy models with 90%+ accuracy
+    secondary_metrics:
+      precision: 0.85
+      recall: 0.85
+      f1_score: 0.85
+    prefer_latest: true
+    max_model_size_mb: 500
+  
+  # Container Configuration
+  container:
+    base_image: "python:3.10-slim"
+    cpu_request: "200m"
+    cpu_limit: "1000m"
+    memory_request: "256Mi"
+    memory_limit: "1Gi"
+    env_vars:
+      LOG_LEVEL: "INFO"
+      WORKERS: "4"
+      TIMEOUT: "30"
+  
+  # Service Configuration
+  service:
+    port: 8000
+    api_prefix: "/api/v1"
+    enable_swagger: false  # Disable in production
+    
+  # Scaling Configuration
+  scaling:
+    min_replicas: 2
+    max_replicas: 10
+    target_cpu_utilization: 70
+    auto_scaling: true
+  
+  # Advanced Options
+  deployment_strategy: "blue_green"
+  domain: "api.yourcompany.com"
+  ssl_enabled: true
+  monitoring_enabled: true
+  log_level: "WARNING"
