@@ -64,6 +64,7 @@ class FileInfoResponse(BaseSchema):
     original_filename: str
     file_info: Dict[str, Any]
     message: str
+    project_id: Optional[str] = None
 
 
 class DataPreviewResponse(BaseSchema):

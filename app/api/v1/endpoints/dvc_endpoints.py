@@ -3,14 +3,13 @@ DVC (Data Version Control) API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
-from pymongo.database import Database
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import tempfile
 import os
 
 from app.core.auth import get_current_active_user
-from app.core.database import get_session, get_database
+from app.core.database import get_session
 from app.models.sql_models import User, Project
 from app.services.dvc_service import DVCService
 
@@ -41,8 +40,7 @@ async def version_model(
     model_name: str = "model",
     metadata: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session),
-    mongo_db: Database = Depends(get_database)
+    db: Session = Depends(get_session)
 ):
     """Version a model file with DVC"""
     
@@ -89,7 +87,6 @@ async def version_model(
             model_name=model_name,
             version=version,
             db_session=db,
-            mongo_db=mongo_db,
             metadata=parsed_metadata
         )
         
@@ -108,8 +105,7 @@ async def version_dataset(
     dataset_name: str = "dataset",
     metadata: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session),
-    mongo_db: Database = Depends(get_database)
+    db: Session = Depends(get_session)
 ):
     """Version a dataset file with DVC"""
     
@@ -163,7 +159,6 @@ async def version_dataset(
             dataset_name=dataset_name,
             version=version,
             db_session=db,
-            mongo_db=mongo_db,
             metadata=parsed_metadata
         )
         
@@ -179,8 +174,7 @@ async def version_dataset(
 async def get_model_versions(
     project_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session),
-    mongo_db: Database = Depends(get_database)
+    db: Session = Depends(get_session)
 ):
     """Get all model versions for a project"""
     
@@ -202,7 +196,6 @@ async def get_model_versions(
     versions = await dvc_service.list_versions(
         user_id=str(current_user.id),
         project_id=project_id,
-        mongo_db=mongo_db,
         data_type="models"
     )
     
@@ -217,8 +210,7 @@ async def get_model_versions(
 async def get_dataset_versions(
     project_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session),
-    mongo_db: Database = Depends(get_database)
+    db: Session = Depends(get_session)
 ):
     """Get all dataset versions for a project"""
     
@@ -240,7 +232,6 @@ async def get_dataset_versions(
     versions = await dvc_service.list_versions(
         user_id=str(current_user.id),
         project_id=project_id,
-        mongo_db=mongo_db,
         data_type="datasets"
     )
     
@@ -303,8 +294,7 @@ async def cleanup_old_versions(
     project_id: str,
     keep_latest: int = 5,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_session),
-    mongo_db: Database = Depends(get_database)
+    db: Session = Depends(get_session)
 ):
     """Clean up old versions, keeping only the latest N versions"""
     
@@ -326,7 +316,6 @@ async def cleanup_old_versions(
     await dvc_service.cleanup_old_versions(
         user_id=str(current_user.id),
         project_id=project_id,
-        mongo_db=mongo_db,
         keep_latest=keep_latest
     )
     

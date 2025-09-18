@@ -4,11 +4,10 @@ Provides endpoints for automated model deployment with Docker isolation and comp
 """
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from pymongo.database import Database
 from typing import List, Optional
 import asyncio
 
-from app.core.database import get_db, get_database_db
+from app.core.database import get_session
 from app.core.auth import get_current_user
 from app.models.sql_models import User, Project, ModelDeployment
 from app.schemas.deployment_schemas import (
@@ -27,8 +26,7 @@ deployment_service = ModelDeploymentService()
 async def deploy_model(
     request: DeploymentRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    mongo_db: Database = Depends(get_database_db),
+    db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -59,7 +57,7 @@ async def deploy_model(
         # Run deployment in background
         background_tasks.add_task(
             deployment_service.deploy_model,
-            request, db, mongo_db
+            request, db
         )
         
         return DeploymentResponse(
@@ -69,15 +67,14 @@ async def deploy_model(
         )
     else:
         # Synchronous deployment
-        return await deployment_service.deploy_model(request, db, mongo_db)
+        return await deployment_service.deploy_model(request, db)
 
 
 @router.post("/compare-models/{project_id}", response_model=List[ModelComparison])
 async def compare_project_models(
     project_id: str,
     criteria: ModelSelectionCriteria,
-    db: Session = Depends(get_db),
-    mongo_db: Database = Depends(get_database_db),
+    db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -99,7 +96,7 @@ async def compare_project_models(
         )
     
     # Get models and compare
-    models = await deployment_service._get_project_models(project_id, db, mongo_db)
+    models = await deployment_service._get_project_models(project_id, db)
     
     if not models:
         raise HTTPException(
@@ -114,7 +111,7 @@ async def compare_project_models(
 @router.get("/status/{deployment_id}", response_model=DeploymentStatus)
 async def get_deployment_status(
     deployment_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -122,6 +119,7 @@ async def get_deployment_status(
     
     Returns health status, replica counts, and deployment progress
     """
+    
     
     # Verify deployment access
     deployment = db.query(ModelDeployment).filter(
@@ -162,7 +160,7 @@ async def list_project_deployments(
     project_id: str,
     environment: Optional[DeploymentEnvironment] = None,
     status: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -216,7 +214,7 @@ async def list_project_deployments(
 @router.post("/stop/{deployment_id}")
 async def stop_deployment(
     deployment_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -274,7 +272,7 @@ async def stop_deployment(
 async def scale_deployment(
     deployment_id: str,
     replicas: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -429,7 +427,7 @@ async def validate_deployment_config(config: DeploymentConfig):
 @router.get("/metrics/{deployment_id}")
 async def get_deployment_metrics(
     deployment_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
     """

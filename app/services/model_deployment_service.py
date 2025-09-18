@@ -15,12 +15,10 @@ import uuid
 import json
 
 from sqlalchemy.orm import Session
-from pymongo.database import Database
 
 from app.core.config import get_settings
-from app.core.database import get_db, get_database_db
-from app.models.sql_models import ModelVersion, Project, User, ModelDeployment
-from app.models.mongo_schemas import MLFlowRunDocument
+from app.core.database import get_session
+from app.models.sql_models import ModelVersion, Project, User, ModelDeployment, MLFlowRun
 from app.schemas.deployment_schemas import (
     DeploymentConfig, ModelComparison, DeploymentRequest, 
     DeploymentResponse, DeploymentStatus, ModelSelectionCriteria
@@ -51,15 +49,14 @@ class ModelDeploymentService:
     async def deploy_model(
         self,
         request: DeploymentRequest,
-        db: Session,
-        mongo_db: Database
+        db: Session
     ) -> DeploymentResponse:
         """
         Main deployment orchestrator with model comparison and selection
         """
         try:
             # 1. Get all models for the project
-            models = await self._get_project_models(request.project_id, db, mongo_db)
+            models = await self._get_project_models(request.project_id, db)
             
             if not models:
                 return DeploymentResponse(
@@ -157,8 +154,7 @@ class ModelDeploymentService:
     async def _get_project_models(
         self, 
         project_id: str, 
-        db: Session, 
-        mongo_db: Database
+        db: Session
     ) -> List[Dict[str, Any]]:
         """Get all models for a project with their metrics"""
         
@@ -179,11 +175,10 @@ class ModelDeploymentService:
         enriched_models = []
         for model in models:
             print(f"🔍 Processing model: {model.name} (version: {model.version})")
-            # Get MLflow metrics from MongoDB
-            mlflow_doc = mongo_db.mlflow_runs.find_one({
-                "project_id": project_id,
-                "model_artifacts": {"$regex": model.name}
-            })
+            # Get MLflow metrics from PostgreSQL
+            mlflow_run = db.query(MLFlowRun).filter(
+                MLFlowRun.project_id == project_uuid
+            ).first()
             
             model_data = {
                 "id": str(model.id),
@@ -195,7 +190,7 @@ class ModelDeploymentService:
                 "size_bytes": model.size_bytes or 0,
                 "performance_metrics": model.performance_metrics or {},
                 "created_at": model.created_at,
-                "mlflow_metrics": mlflow_doc.get("metrics", {}) if mlflow_doc else {}
+                "mlflow_metrics": mlflow_run.metrics if mlflow_run else {}
             }
             
             # Merge metrics

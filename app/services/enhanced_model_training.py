@@ -7,12 +7,10 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
-from pymongo.database import Database
 
 from app.services.model_training import ModelTrainingService as BaseModelTrainingService
 from app.services.dvc_service import DVCService
-from app.models.sql_models import MLExperiment, ModelVersion, User, Project
-from app.models.mongo_schemas import ModelSessionDocument, DVCMetadataDocument, MLFlowRunDocument
+from app.models.sql_models import MLExperiment, ModelVersion, User, Project, ModelSession, DVCMetadata, MLFlowRun, AuditLog
 import mlflow
 import joblib
 
@@ -25,15 +23,13 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
         session_id: str,
         user: Optional[User] = None,
         project: Optional[Project] = None,
-        db_session: Optional[Session] = None,
-        mongo_db: Optional[Database] = None
+        db_session: Optional[Session] = None
     ):
         super().__init__()
         self.session_id = session_id
         self.user = user
         self.project = project
         self.db_session = db_session
-        self.mongo_db = mongo_db
         self.ml_experiment = None
         self.model_version = None
         
@@ -132,8 +128,8 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
                     else:
                         print("⚠️ DEBUG: Failed to save model to filesystem")
                 
-                # Store training session in MongoDB
-                if self.mongo_db is not None:
+                # Store training session in PostgreSQL
+                if self.db_session is not None:
                     await self._store_session_data(results, mlflow_run_id, mlflow_experiment_id)
                 
                 # Log MLflow run details
@@ -216,7 +212,6 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
             model_name=model_name,
             version=version,
             db_session=self.db_session,
-            mongo_db=self.mongo_db,
             metadata=metadata
         )
         
@@ -232,30 +227,48 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
         mlflow_run_id: str, 
         mlflow_experiment_id: str
     ):
-        """Store session data in MongoDB"""
-        if self.mongo_db is None:
+        """Store session data in PostgreSQL"""
+        if self.db_session is None:
             return
         
-        session_doc = ModelSessionDocument(
-            session_id=self.session_id,
-            user_id=str(self.user.id) if self.user else None,
-            project_id=str(self.project.id) if self.project else None,
-            model_type=str(self.model_type),
-            is_classifier=self.is_classifier,
-            hyperparameters=results.get('hyperparameters', {}),
-            training_metrics=results.get('test_metrics', {}),
-            cross_validation_scores=results.get('cv_scores', []),
-            mlflow_run_id=mlflow_run_id,
-            mlflow_experiment_id=mlflow_experiment_id,
-            expires_at=datetime.utcnow() + timedelta(hours=24)  # 24 hour session
-        )
-        
-        # Upsert session document
-        self.mongo_db.model_sessions.update_one(
-            {"session_id": self.session_id},
-            {"$set": session_doc.dict()},
-            upsert=True
-        )
+        try:
+            # Check if session already exists
+            existing_session = self.db_session.query(ModelSession).filter(
+                ModelSession.session_id == self.session_id
+            ).first()
+            
+            if existing_session:
+                # Update existing session
+                existing_session.model_type = str(self.model_type)
+                existing_session.is_classifier = self.is_classifier
+                existing_session.hyperparameters = results.get('hyperparameters', {})
+                existing_session.training_metrics = results.get('test_metrics', {})
+                existing_session.cross_validation_scores = results.get('cv_scores', [])
+                existing_session.mlflow_run_id = mlflow_run_id
+                existing_session.mlflow_experiment_id = mlflow_experiment_id
+                existing_session.expires_at = datetime.utcnow() + timedelta(hours=24)
+            else:
+                # Create new session
+                session_record = ModelSession(
+                    session_id=self.session_id,
+                    user_id=self.user.id if self.user else None,
+                    project_id=self.project.id if self.project else None,
+                    model_type=str(self.model_type),
+                    is_classifier=self.is_classifier,
+                    hyperparameters=results.get('hyperparameters', {}),
+                    training_metrics=results.get('test_metrics', {}),
+                    cross_validation_scores=results.get('cv_scores', []),
+                    mlflow_run_id=mlflow_run_id,
+                    mlflow_experiment_id=mlflow_experiment_id,
+                    expires_at=datetime.utcnow() + timedelta(hours=24)
+                )
+                self.db_session.add(session_record)
+            
+            self.db_session.commit()
+        except Exception as e:
+            print(f"⚠️  Warning: Failed to store session data: {e}")
+            if self.db_session:
+                self.db_session.rollback()
     
     async def _store_experiment_data(
         self, 
@@ -350,41 +363,57 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
             raise e
     
     async def _store_mlflow_run_data(self, run, results: Dict[str, Any]):
-        """Store MLflow run metadata in MongoDB"""
-        if self.mongo_db is None:
+        """Store MLflow run metadata in PostgreSQL"""
+        if self.db_session is None:
             return
         
-        run_doc = MLFlowRunDocument(
-            run_id=run.info.run_id,
-            experiment_id=run.info.experiment_id,
-            project_id=str(self.project.id) if self.project else "unknown",
-            user_id=str(self.user.id) if self.user else "unknown",
-            session_id=self.session_id,
-            status=run.info.status,
-            start_time=datetime.fromtimestamp(run.info.start_time / 1000),
-            end_time=datetime.fromtimestamp(run.info.end_time / 1000) if run.info.end_time else None,
-            parameters=results.get('hyperparameters', {}),
-            metrics=results.get('test_metrics', {}),
-            artifact_uri=run.info.artifact_uri
-        )
-        
-        self.mongo_db.mlflow_runs.insert_one(run_doc.dict())
+        try:
+            run_record = MLFlowRun(
+                run_id=run.info.run_id,
+                experiment_id=run.info.experiment_id,
+                project_id=self.project.id if self.project else None,
+                user_id=self.user.id if self.user else None,
+                session_id=self.session_id,
+                status=run.info.status,
+                start_time=datetime.fromtimestamp(run.info.start_time / 1000),
+                end_time=datetime.fromtimestamp(run.info.end_time / 1000) if run.info.end_time else None,
+                parameters=results.get('hyperparameters', {}),
+                metrics=results.get('test_metrics', {}),
+                artifact_uri=run.info.artifact_uri
+            )
+            
+            self.db_session.add(run_record)
+            self.db_session.commit()
+        except Exception as e:
+            print(f"⚠️  Warning: Failed to store MLflow run data: {e}")
+            if self.db_session:
+                self.db_session.rollback()
     
     async def _log_error(self, error_message: str, mlflow_run_id: Optional[str] = None):
-        """Log error to MongoDB"""
-        if self.mongo_db is None:
+        """Log error to PostgreSQL"""
+        if self.db_session is None:
             return
         
-        error_doc = {
-            "session_id": self.session_id,
-            "user_id": str(self.user.id) if self.user else None,
-            "project_id": str(self.project.id) if self.project else None,
-            "error_message": error_message,
-            "mlflow_run_id": mlflow_run_id,
-            "timestamp": datetime.utcnow()
-        }
-        
-        self.mongo_db.training_errors.insert_one(error_doc)
+        try:
+            error_log = AuditLog(
+                user_id=self.user.id if self.user else None,
+                project_id=self.project.id if self.project else None,
+                action="training_error",
+                resource_type="model_training",
+                resource_id=self.session_id,
+                details={
+                    "error_message": error_message,
+                    "mlflow_run_id": mlflow_run_id,
+                    "session_id": self.session_id
+                }
+            )
+            
+            self.db_session.add(error_log)
+            self.db_session.commit()
+        except Exception as e:
+            print(f"⚠️  Warning: Failed to log error: {e}")
+            if self.db_session:
+                self.db_session.rollback()
     
     def _calculate_file_hash(self, file_path: str) -> str:
         """Calculate MD5 hash of file"""
@@ -395,23 +424,52 @@ class EnhancedModelTrainingService(BaseModelTrainingService):
         return hash_md5.hexdigest()
     
     async def get_session_data(self) -> Optional[Dict[str, Any]]:
-        """Get session data from MongoDB"""
-        if self.mongo_db is None:
+        """Get session data from PostgreSQL"""
+        if self.db_session is None:
             return None
         
-        session = self.mongo_db.model_sessions.find_one(
-            {"session_id": self.session_id}
-        )
-        return session
+        try:
+            session = self.db_session.query(ModelSession).filter(
+                ModelSession.session_id == self.session_id
+            ).first()
+            
+            if session:
+                return {
+                    "session_id": session.session_id,
+                    "user_id": session.user_id,
+                    "project_id": session.project_id,
+                    "model_type": session.model_type,
+                    "is_classifier": session.is_classifier,
+                    "hyperparameters": session.hyperparameters,
+                    "training_metrics": session.training_metrics,
+                    "cross_validation_scores": session.cross_validation_scores,
+                    "mlflow_run_id": session.mlflow_run_id,
+                    "mlflow_experiment_id": session.mlflow_experiment_id,
+                    "expires_at": session.expires_at
+                }
+            return None
+        except Exception as e:
+            print(f"⚠️  Warning: Failed to get session data: {e}")
+            return None
     
     async def cleanup_expired_sessions(self):
         """Clean up expired sessions"""
-        if self.mongo_db is None:
+        if self.db_session is None:
             return
         
-        self.mongo_db.model_sessions.delete_many({
-            "expires_at": {"$lt": datetime.utcnow()}
-        })
+        try:
+            # Delete expired sessions
+            expired_count = self.db_session.query(ModelSession).filter(
+                ModelSession.expires_at < datetime.utcnow()
+            ).delete()
+            
+            self.db_session.commit()
+            if expired_count > 0:
+                print(f"🧹 Cleaned up {expired_count} expired sessions")
+        except Exception as e:
+            print(f"⚠️  Warning: Failed to cleanup expired sessions: {e}")
+            if self.db_session:
+                self.db_session.rollback()
     
     async def _log_mlflow_run(self, results: Dict[str, Any], mlflow_run_id: str, mlflow_experiment_id: str):
         """Log MLflow run details for debugging"""

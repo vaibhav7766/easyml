@@ -4,7 +4,6 @@ Model training endpoints with DVC integration
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import Dict, List, Optional, Any
 from sqlalchemy.orm import Session
-from pymongo.database import Database
 
 from app.services.enhanced_model_training import EnhancedModelTrainingService
 from app.services.file_service import FileService
@@ -12,7 +11,7 @@ from app.services.preprocessing import PreprocessingService
 from app.schemas.schemas import ModelTrainingRequest, ModelTrainingResponse, PredictionRequest, PredictionResponse, HyperparameterTuningRequest, HyperparameterTuningResponse
 from app.core.enums import ModelType
 from app.core.auth import get_current_active_user
-from app.core.database import get_db, get_database
+from app.core.database import get_db
 from app.models.sql_models import User, Project
 
 router = APIRouter()
@@ -34,8 +33,7 @@ def get_or_create_training_service(
     session_id: str,
     user: Optional[User] = None,
     project: Optional[Project] = None,
-    db_session: Optional[Session] = None,
-    mongo_db: Optional[Database] = None
+    db_session: Optional[Session] = None
 ) -> EnhancedModelTrainingService:
     """Get or create a training service for a session"""
     if session_id not in training_services:
@@ -43,8 +41,7 @@ def get_or_create_training_service(
             session_id=session_id,
             user=user,
             project=project,
-            db_session=db_session,
-            mongo_db=mongo_db
+            db_session=db_session
         )
     else:
         # Update existing service with current context
@@ -52,7 +49,6 @@ def get_or_create_training_service(
         service.user = user
         service.project = project
         service.db_session = db_session
-        service.mongo_db = mongo_db
     return training_services[session_id]
 
 
@@ -61,8 +57,7 @@ async def train_model(
     project_id: str,
     request: ModelTrainingRequest,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db),
-    mongo_db: Database = Depends(get_database)
+    db: Session = Depends(get_db)
 ):
     """
     Train a machine learning model with automatic DVC versioning
@@ -117,8 +112,7 @@ async def train_model(
         session_id=request.session_id,
         user=current_user,
         project=project,
-        db_session=db,
-        mongo_db=mongo_db
+        db_session=db
     )
     print(f"🔍 ENDPOINT DEBUG: Service type: {type(training_service)}")
     

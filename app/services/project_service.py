@@ -1,21 +1,19 @@
 """
-Project management service integrating PostgreSQL, MongoDB, and MLflow
+Project management service using PostgreSQL and MLflow
 """
 import os
 import uuid
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
-from pymongo.database import Database
 
-from app.models.sql_models import Project, User, MLExperiment, ModelVersion
-from app.models.mongo_schemas import ProjectConfigDocument, AuditLogDocument
-from app.core.database import get_db, get_database
+from app.models.sql_models import Project, User, MLExperiment, ModelVersion, ProjectConfig, AuditLog
+from app.core.database import get_db
 import mlflow
 
 
 class ProjectService:
-    """Service for managing projects with multi-database integration"""
+    """Service for managing projects with PostgreSQL and MLflow"""
     
     def __init__(self):
         self.models_base_path = os.path.join(os.getcwd(), "models")
@@ -26,7 +24,6 @@ class ProjectService:
     async def create_project(
         self, 
         db: Session, 
-        mongo_db: Optional[Database],
         user: User,
         name: str,
         description: Optional[str] = None,
@@ -64,27 +61,23 @@ class ProjectService:
             experiment = mlflow.get_experiment_by_name(mlflow_experiment_name)
             experiment_id = experiment.experiment_id if experiment else None
         
-        # Store project configuration in MongoDB
-        project_config = ProjectConfigDocument(
-            project_id=str(project.id),
-            user_id=str(user.id),
-            name=name,
-            description=description,
+        # Store project configuration in PostgreSQL
+        project_config = ProjectConfig(
+            project_id=project.id,
+            user_id=user.id,
             mlflow_experiment_name=mlflow_experiment_name,
             model_storage_path=project_models_path,
             dataset_storage_path=project_datasets_path
         )
+        db.add(project_config)
+        db.commit()
         
-        # Save project configuration in MongoDB (if available)
-        if mongo_db is not None:
-            mongo_db.project_configs.insert_one(project_config.dict())
-            
-            # Log project creation
-            await self._log_action(
-                mongo_db,
-                user_id=str(user.id),
-                project_id=str(project.id),
-                action_type="project_created",
+        # Log project creation
+        await self._log_action(
+            db,
+            user_id=str(user.id),
+            project_id=str(project.id),
+            action_type="project_created",
             resource_type="project",
             resource_id=str(project.id),
             new_values={"name": name, "description": description}
@@ -106,7 +99,6 @@ class ProjectService:
     async def get_project_by_id(
         self,
         db: Session,
-        mongo_db: Optional[Database],
         project_id: str,
         user: User
     ) -> Optional[Dict[str, Any]]:
@@ -120,12 +112,10 @@ class ProjectService:
         if not project:
             return None
         
-        # Get configuration from MongoDB (if available)
-        config = None
-        if mongo_db is not None:
-            config = mongo_db.project_configs.find_one({
-                "project_id": project_id
-            })
+        # Get configuration from PostgreSQL
+        config = db.query(ProjectConfig).filter(
+            ProjectConfig.project_id == project_id
+        ).first()
         
         # Get experiment count
         experiment_count = db.query(MLExperiment).filter(
@@ -149,7 +139,6 @@ class ProjectService:
     async def update_project(
         self,
         db: Session,
-        mongo_db: Optional[Database],
         project_id: str,
         user: User,
         updates: Dict[str, Any]
@@ -176,16 +165,9 @@ class ProjectService:
         db.commit()
         db.refresh(project)
         
-        # Update MongoDB configuration (if available)
-        if mongo_db is not None:
-            mongo_db.project_configs.update_one(
-                {"project_id": project_id},
-                {"$set": {**updates, "updated_at": datetime.utcnow()}}
-            )
-        
         # Log update
         await self._log_action(
-            mongo_db,
+            db,
             user_id=str(user.id),
             project_id=project_id,
             action_type="project_updated",
@@ -200,7 +182,6 @@ class ProjectService:
     async def delete_project(
         self,
         db: Session,
-        mongo_db: Optional[Database],
         project_id: str,
         user: User
     ) -> bool:
@@ -217,16 +198,17 @@ class ProjectService:
         project.is_active = False
         db.commit()
         
-        # Update MongoDB (if available)
-        if mongo_db is not None:
-            mongo_db.project_configs.update_one(
-                {"project_id": project_id},
-                {"$set": {"is_active": False, "updated_at": datetime.utcnow()}}
-            )
+        # Update project config
+        project_config = db.query(ProjectConfig).filter(
+            ProjectConfig.project_id == project_id
+        ).first()
+        if project_config:
+            project_config.is_public = False  # Mark as inactive
+            db.commit()
         
         # Log deletion
         await self._log_action(
-            mongo_db,
+            db,
             user_id=str(user.id),
             project_id=project_id,
             action_type="project_deleted",
@@ -246,7 +228,7 @@ class ProjectService:
     
     async def _log_action(
         self,
-        mongo_db: Optional[Database],
+        db: Session,
         user_id: str,
         project_id: str,
         action_type: str,
@@ -257,20 +239,22 @@ class ProjectService:
         session_id: Optional[str] = None
     ):
         """Log action to audit trail"""
-        if mongo_db is None:
-            print(f"⚠️  Warning: MongoDB unavailable, skipping audit log for {action_type}")
-            return
+        try:
+            log_entry = AuditLog(
+                action_id=str(uuid.uuid4()),
+                user_id=uuid.UUID(user_id) if user_id else None,
+                project_id=uuid.UUID(project_id) if project_id else None,
+                action_type=action_type,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                old_values=old_values or {},
+                new_values=new_values or {},
+                session_id=session_id
+            )
             
-        log_entry = AuditLogDocument(
-            action_id=str(uuid.uuid4()),
-            user_id=user_id,
-            project_id=project_id,
-            action_type=action_type,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            old_values=old_values or {},
-            new_values=new_values or {},
-            session_id=session_id
-        )
-        
-        mongo_db.audit_logs.insert_one(log_entry.dict())
+            db.add(log_entry)
+            db.commit()
+        except Exception as e:
+            print(f"⚠️  Warning: Failed to log action {action_type}: {e}")
+            # Don't fail the main operation if logging fails
+            pass

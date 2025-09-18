@@ -14,8 +14,6 @@ load_dotenv()
 
 class Settings(BaseSettings):
     postgres_url: str = Field(..., alias="POSTGRES_URL")
-    mongo_url: str = Field(..., alias="MONGO_URL")
-    mongo_db_name: str = Field(..., alias="MONGO_DB_NAME")
 
     secret_key: str = Field(..., alias="SECRET_KEY")
     access_token_expire_minutes: int = Field(..., alias="ACCESS_TOKEN_EXPIRE_MINUTES")

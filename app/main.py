@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     print("🚀 Starting EasyML Application...")
     settings = get_settings()
     print(f"📁 Upload directory: {settings.upload_dir}")
-    print(f"🗄️  MongoDB URI: {settings.mongo_url}")
+    print(f"🗄️  PostgreSQL Database: {settings.postgres_url}")
     
     # Auto-create database tables
     try:

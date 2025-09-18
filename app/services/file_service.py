@@ -26,12 +26,13 @@ class FileService:
         self.supported_extensions = {'.csv', '.xlsx', '.xls', '.json', '.parquet'}
         self.max_file_size = 100 * 1024 * 1024  # 100MB
     
-    async def upload_file(self, file: UploadFile) -> Dict[str, Any]:
+    async def upload_file(self, file: UploadFile, project_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Upload and validate a file
         
         Args:
             file: FastAPI UploadFile object
+            project_id: Optional project ID to associate the file with
             
         Returns:
             Dictionary with upload results and file info
@@ -45,7 +46,14 @@ class FileService:
             # Generate unique filename
             file_extension = Path(file.filename).suffix.lower()
             unique_filename = f"{uuid.uuid4()}{file_extension}"
-            file_path = self.upload_dir / unique_filename
+            
+            # Determine upload directory based on project_id
+            if project_id:
+                project_upload_dir = self.upload_dir / project_id
+                project_upload_dir.mkdir(exist_ok=True)
+                file_path = project_upload_dir / unique_filename
+            else:
+                file_path = self.upload_dir / unique_filename
             
             # Save file
             async with aiofiles.open(file_path, 'wb') as f:
@@ -54,13 +62,16 @@ class FileService:
             
             # Get file info
             file_info = await self._get_file_info(file_path, file.filename)
+            if project_id:
+                file_info["project_id"] = project_id
             
             return {
                 "success": True,
                 "file_id": unique_filename,
                 "file_path": str(file_path),
                 "original_filename": file.filename,
-                "file_info": file_info
+                "file_info": file_info,
+                "project_id": project_id
             }
             
         except Exception as e:
@@ -69,21 +80,32 @@ class FileService:
                 "error": str(e)
             }
     
-    async def load_data(self, file_id: str, **kwargs) -> Dict[str, Any]:
+    async def load_data(self, file_id: str, project_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """
         Load data from uploaded file
         
         Args:
             file_id: Unique file identifier
+            project_id: Optional project ID to locate the file
             **kwargs: Additional parameters for pandas read functions
             
         Returns:
             Dictionary with loaded data and metadata
         """
         try:
-            file_path = self.upload_dir / file_id
+            # Try project-specific path first, then fall back to general upload dir
+            file_path = None
+            if project_id:
+                project_file_path = self.upload_dir / project_id / file_id
+                if project_file_path.exists():
+                    file_path = project_file_path
             
-            if not file_path.exists():
+            if not file_path:
+                general_file_path = self.upload_dir / file_id
+                if general_file_path.exists():
+                    file_path = general_file_path
+            
+            if not file_path:
                 return {
                     "success": False,
                     "error": f"File {file_id} not found"
@@ -124,21 +146,32 @@ class FileService:
                 "file_id": file_id
             }
     
-    async def get_data_preview(self, file_id: str, n_rows: int = 5) -> Dict[str, Any]:
+    async def get_data_preview(self, file_id: str, n_rows: int = 5, project_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get a preview of the data without loading the entire file
         
         Args:
             file_id: Unique file identifier
             n_rows: Number of rows to preview
+            project_id: Optional project ID to locate the file
             
         Returns:
             Dictionary with data preview and basic info
         """
         try:
-            file_path = self.upload_dir / file_id
+            # Try project-specific path first, then fall back to general upload dir
+            file_path = None
+            if project_id:
+                project_file_path = self.upload_dir / project_id / file_id
+                if project_file_path.exists():
+                    file_path = project_file_path
             
-            if not file_path.exists():
+            if not file_path:
+                general_file_path = self.upload_dir / file_id
+                if general_file_path.exists():
+                    file_path = general_file_path
+            
+            if not file_path:
                 return {
                     "success": False,
                     "error": f"File {file_id} not found"
@@ -189,20 +222,31 @@ class FileService:
                 "file_id": file_id
             }
     
-    def delete_file(self, file_id: str) -> Dict[str, Any]:
+    def delete_file(self, file_id: str, project_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Delete an uploaded file
         
         Args:
             file_id: Unique file identifier
+            project_id: Optional project ID to locate the file
             
         Returns:
             Dictionary with deletion result
         """
         try:
-            file_path = self.upload_dir / file_id
+            # Try project-specific path first, then fall back to general upload dir
+            file_path = None
+            if project_id:
+                project_file_path = self.upload_dir / project_id / file_id
+                if project_file_path.exists():
+                    file_path = project_file_path
             
-            if not file_path.exists():
+            if not file_path:
+                general_file_path = self.upload_dir / file_id
+                if general_file_path.exists():
+                    file_path = general_file_path
+            
+            if not file_path:
                 return {
                     "success": False,
                     "error": f"File {file_id} not found"
@@ -221,31 +265,67 @@ class FileService:
                 "error": str(e)
             }
     
-    def list_files(self) -> Dict[str, Any]:
+    def list_files(self, project_id: Optional[str] = None) -> Dict[str, Any]:
         """
-        List all uploaded files
+        List all uploaded files, optionally filtered by project
         
+        Args:
+            project_id: Optional project ID to filter files by
+            
         Returns:
             Dictionary with list of files and their info
         """
         try:
             files = []
             
-            for file_path in self.upload_dir.iterdir():
-                if file_path.is_file() and file_path.suffix.lower() in self.supported_extensions:
-                    file_info = {
-                        "file_id": file_path.name,
-                        "original_name": file_path.name,  # Could be enhanced to store original names
-                        "size": file_path.stat().st_size,
-                        "created": file_path.stat().st_ctime,
-                        "extension": file_path.suffix.lower()
-                    }
-                    files.append(file_info)
+            if project_id:
+                # List files from project-specific directory
+                project_upload_dir = self.upload_dir / project_id
+                if project_upload_dir.exists():
+                    for file_path in project_upload_dir.iterdir():
+                        if file_path.is_file() and file_path.suffix.lower() in self.supported_extensions:
+                            file_info = {
+                                "file_id": file_path.name,
+                                "original_name": file_path.name,  # Could be enhanced to store original names
+                                "size": file_path.stat().st_size,
+                                "created": file_path.stat().st_ctime,
+                                "extension": file_path.suffix.lower(),
+                                "project_id": project_id
+                            }
+                            files.append(file_info)
+            else:
+                # List files from general upload directory
+                for file_path in self.upload_dir.iterdir():
+                    if file_path.is_file() and file_path.suffix.lower() in self.supported_extensions:
+                        file_info = {
+                            "file_id": file_path.name,
+                            "original_name": file_path.name,  # Could be enhanced to store original names
+                            "size": file_path.stat().st_size,
+                            "created": file_path.stat().st_ctime,
+                            "extension": file_path.suffix.lower()
+                        }
+                        files.append(file_info)
+                
+                # Also check project directories if no specific project_id provided
+                for project_dir in self.upload_dir.iterdir():
+                    if project_dir.is_dir():
+                        for file_path in project_dir.iterdir():
+                            if file_path.is_file() and file_path.suffix.lower() in self.supported_extensions:
+                                file_info = {
+                                    "file_id": file_path.name,
+                                    "original_name": file_path.name,
+                                    "size": file_path.stat().st_size,
+                                    "created": file_path.stat().st_ctime,
+                                    "extension": file_path.suffix.lower(),
+                                    "project_id": project_dir.name
+                                }
+                                files.append(file_info)
             
             return {
                 "success": True,
                 "files": files,
-                "total_files": len(files)
+                "total_files": len(files),
+                "project_id": project_id
             }
             
         except Exception as e:

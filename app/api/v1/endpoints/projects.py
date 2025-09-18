@@ -3,13 +3,12 @@ Project management API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pymongo.database import Database
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from app.core.auth import get_current_active_user
-from app.core.database import get_db, get_database
+from app.core.database import get_db
 from app.models.sql_models import User, Project
 from app.services.project_service import ProjectService
 from app.schemas.schemas import ProjectResponse, ProjectCreate as ProjectCreateSchema
@@ -38,19 +37,13 @@ class ProjectUpdate(BaseModel):
 async def create_project(
     project_data: ProjectCreateAPI,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db),
-    mongo_db: Optional[Database] = Depends(get_database)
+    db: Session = Depends(get_db)
 ):
     """Create a new project"""
     project_service = ProjectService()
     
-    # Handle MongoDB unavailability gracefully
-    if mongo_db is None:
-        print("⚠️  Warning: MongoDB unavailable, creating project with PostgreSQL only")
-    
     project = await project_service.create_project(
         db=db,
-        mongo_db=mongo_db,
         user=current_user,
         name=project_data.name,
         description=project_data.description,
@@ -97,15 +90,13 @@ async def get_user_projects(
 async def get_project(
     project_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db),
-    mongo_db: Database = Depends(get_database)
+    db: Session = Depends(get_db)
 ):
     """Get project details"""
     project_service = ProjectService()
     
     project_data = await project_service.get_project_by_id(
         db=db,
-        mongo_db=mongo_db,
         project_id=project_id,
         user=current_user
     )
@@ -136,8 +127,7 @@ async def update_project(
     project_id: str,
     project_update: ProjectUpdate,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db),
-    mongo_db: Database = Depends(get_database)
+    db: Session = Depends(get_db)
 ):
     """Update project"""
     project_service = ProjectService()
@@ -146,7 +136,6 @@ async def update_project(
     
     project = await project_service.update_project(
         db=db,
-        mongo_db=mongo_db,
         project_id=project_id,
         user=current_user,
         updates=updates
@@ -165,15 +154,13 @@ async def update_project(
 async def delete_project(
     project_id: str,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db),
-    mongo_db: Database = Depends(get_database)
+    db: Session = Depends(get_db)
 ):
     """Delete project"""
     project_service = ProjectService()
     
     success = await project_service.delete_project(
         db=db,
-        mongo_db=mongo_db,
         project_id=project_id,
         user=current_user
     )
