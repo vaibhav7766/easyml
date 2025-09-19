@@ -105,13 +105,13 @@ class FileService:
             file_extension = file_path.split('.')[-1].lower()
             
             if file_extension == 'csv':
-                data = pd.read_csv(file_path, **kwargs)
+                data = pd.read_csv(file_path)
             elif file_extension in ['xlsx', 'xls']:
-                data = pd.read_excel(file_path, **kwargs)
+                data = pd.read_excel(file_path)
             elif file_extension == 'json':
-                data = pd.read_json(file_path, **kwargs)
+                data = pd.read_json(file_path)
             elif file_extension == 'parquet':
-                data = pd.read_parquet(file_path, **kwargs)
+                data = pd.read_parquet(file_path)
             else:
                 return {
                     "success": False,

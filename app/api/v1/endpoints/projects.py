@@ -13,7 +13,7 @@ from app.core.auth import get_current_active_user
 from app.core.database import get_db
 from app.models.sql_models import User, Project
 from app.services.project_service import ProjectService
-from app.schemas.schemas import ProjectResponse, ProjectCreate as ProjectCreateSchema
+from app.schemas.schemas import ProjectResponse, ProjectConfigResponse, ProjectCreate as ProjectCreateSchema
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -35,7 +35,7 @@ class ProjectCreateAPI(BaseModel):
 
 class ProjectDetailResponse(BaseModel):
     project: ProjectResponse
-    config: Optional[Dict[str, Any]]
+    config: ProjectConfigResponse
     stats: Dict[str, int]
 
 

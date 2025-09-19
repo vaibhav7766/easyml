@@ -348,6 +348,25 @@ async def get_file_info(
                 detail="Project not found or you don't have access to it"
             )
     
+    current_dataset = db.query(DatasetVersion).filter(
+        DatasetVersion.project_id == project_id,
+        DatasetVersion.is_current == True
+    ).first()
+    
+    if not current_dataset:
+        # Fallback to latest version if no current version is set
+        current_dataset = db.query(DatasetVersion).filter(
+            DatasetVersion.project_id == project_id
+        ).order_by(DatasetVersion.created_at.desc()).first()
+    
+    if not current_dataset:
+        raise HTTPException(
+            status_code=404,
+            detail="No dataset found for this project. Please upload a dataset first."
+        )
+    
+    file_id = current_dataset.storage_path
+    
     result = await file_service.load_data(file_id, project_id=project_id)
     
     if not result.get("success", False):

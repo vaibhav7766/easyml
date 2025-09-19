@@ -55,6 +55,53 @@ class ProjectResponse(BaseSchema):
             return data
         return data
 
+# Project Configuration Schemas
+class ProjectConfigResponse(BaseModel):
+    """Schema for project configuration response"""
+    id: str
+    
+    # MLflow configuration
+    mlflow_tracking_uri: Optional[str] = None
+    mlflow_experiment_name: str
+    
+    # DVC configuration
+    dvc_remote_name: Optional[str] = None
+    dvc_storage_config: Dict[str, Any] = {}
+    
+    # Storage settings
+    model_storage_path: str
+    dataset_storage_path: str
+    
+    # Default settings
+    default_hyperparameters: Dict[str, Any] = {}
+    
+    # Collaboration settings
+    allowed_users: List[str] = []
+    is_public: bool = False
+    
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_uuids(cls, data):
+        """Convert UUIDs in SQLAlchemy objects/dicts to strings"""
+        import uuid
+        if hasattr(data, '__dict__'):
+            data_dict = {}
+            for key, value in data.__dict__.items():
+                if isinstance(value, uuid.UUID):
+                    data_dict[key] = str(value)
+                else:
+                    data_dict[key] = value
+            return data_dict
+        elif isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, uuid.UUID):
+                    data[key] = str(value)
+            return data
+        return data
+
 
 # Upload Schemas
 class FileInfoResponse(BaseSchema):

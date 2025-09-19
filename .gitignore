@@ -65,6 +65,7 @@ datasets/*.csv
 datasets/*.json
 !datasets/.gitkeep
 cover/
+dvc_storage/
 
 # Translations
 *.mo
